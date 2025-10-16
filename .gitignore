@@ -1,2 +1,8 @@
 notes/
 DS_Store
+.env
+.venv/
+__pycache__/
+*.pyc
+data/
+server.log
