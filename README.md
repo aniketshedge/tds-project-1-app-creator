@@ -19,7 +19,7 @@ Flask-based service that receives structured task briefs, generates web apps wit
 ## Quick Start
 1. **Clone** this repository onto the new VM:
    ```bash
-   git clone <REPO_URL_TO_BE_FILLED>
+   git clone https://github.com/aniketshedge/tds-project-1-app-creator
    cd tds-project-1-app-creator
    ```
 2. **Bootstrap** the machine:
