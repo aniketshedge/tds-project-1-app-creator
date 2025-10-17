@@ -156,12 +156,13 @@ class GitHubClient:
     def configure_pages(self, repo_full_name: str) -> str:
         logger.info("Configuring GitHub Pages for %s", repo_full_name)
         url = f"{API_BASE}/repos/{repo_full_name}/pages"
-        response = self.session.put(
-            url,
-            json={"source": {"branch": self.default_branch, "path": "/"}},
-            timeout=self.timeout,
-        )
-        if response.status_code not in (201, 202, 204, 200, 409):
+        payload = {"source": {"branch": self.default_branch, "path": "/"}}
+        response = self.session.post(url, json=payload, timeout=self.timeout)
+        if response.status_code == 409:
+            # Site already exists, update configuration instead.
+            response = self.session.put(url, json=payload, timeout=self.timeout)
+
+        if response.status_code not in (201, 202, 204, 200):
             raise RuntimeError(f"Failed to configure GitHub Pages: {response.text}")
 
         pages_url = f"https://{self.owner}.github.io/{repo_full_name.split('/')[-1]}/"
