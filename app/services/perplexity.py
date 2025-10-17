@@ -110,6 +110,7 @@ Requirements:
 - Preserve placeholder tokens exactly as provided (e.g., `${{seed}}`, `${{result}}`, `${{nonce}}`) without substituting example values.
 - Exclude evaluator checks from README or other user-facing docs; instead provide a professional README with sections for Overview, Getting Started, Usage, and task-specific notes.
 - Write code defensively when consuming attachments (e.g., trim blank rows, guard against malformed data) to prevent runtime errors.
+- Do not use Node.js or other server-only APIs (e.g., `require`, `module.exports`, `process`, `fs`)—the output must run entirely in the browser.
 - All HTML assets must be self-contained (no server runtime for the deployed site).
 - Include an MIT LICENSE file if not already provided.
 - Ensure the site works when hosted on GitHub Pages (root path, relative assets).

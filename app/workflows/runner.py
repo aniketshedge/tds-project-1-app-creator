@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import logging
+import re
 from textwrap import dedent
 
 from dotenv import load_dotenv
 
 from ..config import Settings
-from ..models import TaskRequest
+from ..models import Manifest, TaskRequest
 from ..services.evaluation import notify_evaluation
 from ..services.github import GitHubClient, DeploymentResult, generate_repo_name
 from ..services.perplexity import PerplexityClient
@@ -14,6 +15,8 @@ from ..services.workspace import WorkspaceManager
 from ..storage import TaskRepository
 
 logger = logging.getLogger(__name__)
+
+PLACEHOLDER_PATTERN = re.compile(r"\$\{[^}]+\}")
 
 
 def process_job(job_id: str) -> None:
@@ -50,7 +53,23 @@ def process_job(job_id: str) -> None:
             settings.request_timeout_seconds,
             settings.max_retries,
         )
-        manifest = perplexity.generate_manifest(task_request, task_request.attachments)
+        required_tokens = _collect_placeholders(task_request)
+        for attempt in range(settings.max_retries):
+            manifest = perplexity.generate_manifest(task_request, task_request.attachments)
+            try:
+                _validate_manifest_content(manifest, required_tokens)
+                break
+            except ValueError as err:
+                logger.warning(
+                    "Manifest validation failed for job %s (attempt %s/%s): %s",
+                    job_id,
+                    attempt + 1,
+                    settings.max_retries,
+                    err,
+                )
+                if attempt == settings.max_retries - 1:
+                    raise
+                continue
 
         workspace.write_manifest(manifest)
         workspace.write_attachments(task_request.attachments, settings.attachment_max_bytes)
@@ -116,6 +135,44 @@ def process_job(job_id: str) -> None:
         raise
     finally:
         workspace.cleanup()
+
+
+def _collect_placeholders(request: TaskRequest) -> set[str]:
+    tokens: set[str] = set(PLACEHOLDER_PATTERN.findall(request.brief))
+    for check in request.checks:
+        tokens.update(PLACEHOLDER_PATTERN.findall(check))
+    return tokens
+
+
+def _validate_manifest_content(manifest: Manifest, required_tokens: set[str]) -> None:
+    if manifest.readme is None or not manifest.readme.strip():
+        raise ValueError("Manifest did not include README content")
+
+    text_blobs: list[str] = [manifest.readme]
+    for item in manifest.files:
+        if item.encoding == "text":
+            text_blobs.append(item.content)
+
+    combined = "\n".join(text_blobs)
+    missing = [token for token in required_tokens if token not in combined]
+    if missing:
+        raise ValueError(f"Missing placeholder tokens: {', '.join(sorted(missing))}")
+
+    forbidden_markers = (
+        "require(",
+        "module.exports",
+        "process.",
+        "fs.",
+        "import fs",
+        "from 'fs'",
+        'from "fs"',
+    )
+    for item in manifest.files:
+        if item.encoding != "text":
+            continue
+        lowered = item.content.lower()
+        if any(marker in lowered for marker in forbidden_markers):
+            raise ValueError(f"Disallowed server-side API detected in {item.path}")
 
 
 def _validate_attachments(request: TaskRequest, limit: int) -> None:
