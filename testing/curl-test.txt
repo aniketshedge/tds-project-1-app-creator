@@ -1,24 +1,14 @@
-curl \
-  -X POST \
+# Sample 1: sum-of-sales
+curl -X POST http://172.232.103.232:8000/tasks \
   -H "Content-Type: application/json" \
-  -d '{
-    "email": "<student@example.com>",
-    "secret": "<shared-secret>",
-    "task": "sum-of-sales",
-    "round": 1,
-    "nonce": "<unique-nonce>",
-    "brief": "Publish a single-page site that fetches data.csv from attachments, sums its sales column, sets the title to \"Sales Summary <seed>\", displays the total inside #total-sales, and loads Bootstrap 5 from jsdelivr.",
-    "checks": [
-      "document.title === `Sales Summary <seed>`",
-      "!!document.querySelector(\"link[href*='bootstrap']\")",
-      "Math.abs(parseFloat(document.querySelector(\"#total-sales\").textContent) - <result>) < 0.01"
-    ],
-    "evaluation_url": "<https://example.com/notify>",
-    "attachments": [
-      {
-        "name": "data.csv",
-        "url": "data:text/csv;base64,<base64-data>"
-      }
-    ]
-  }' \
-  http://172.232.103.232:8000/tasks
+  -d "{\"email\": \"student@example.com\", \"secret\": \"<your-shared-secret>\", \"task\": \"sum-of-sales\", \"round\": 1, \"nonce\": \"demo-nonce-123\", \"brief\": \"Publish a single-page site that fetches data.csv from attachments, sums its sales column, sets the title to 'Sales Summary seed', displays the total inside #total-sales, and loads Bootstrap 5 from jsdelivr.\", \"checks\": [\"document.title === 'Sales Summary seed'\", \"!!document.querySelector('link[href*=bootstrap]')\", \"Math.abs(parseFloat(document.querySelector('#total-sales').textContent) - 123) < 0.01\"], \"evaluation_url\": \"https://webhook.site/<your-id>\", \"attachments\": [{\"name\": \"data.csv\", \"url\": \"data:text/csv;base64,cHJvZHVjdCxyZWdpb24sc2FsZXMKV2lkZ2V0LE5vcnRoLDEyMDAuNTAKR2FkZ2V0LFNvdXRoLDg5Ny4wMAo=\"}]}"
+
+# Sample 2: markdown-to-html
+curl -X POST http://172.232.103.232:8000/tasks \
+  -H "Content-Type: application/json" \
+  -d "{\"email\": \"student@example.com\", \"secret\": \"<your-shared-secret>\", \"task\": \"markdown-to-html\", \"round\": 1, \"nonce\": \"demo-nonce-456\", \"brief\": \"Publish a static page that converts input.md from attachments to HTML with marked, renders it inside #markdown-output, and loads highlight.js for code blocks.\", \"checks\": [\"!!document.querySelector('script[src*=\\\"marked\\\"]')\", \"!!document.querySelector('script[src*=\\\"highlight.js\\\"]')\", \"document.querySelector('#markdown-output').innerHTML.includes('<h')\"], \"evaluation_url\": \"https://webhook.site/<your-id>\", \"attachments\": [{\"name\": \"input.md\", \"url\": \"data:text/markdown;base64,SGVsbG8gIyBIZWFkZXINCg==\"}]}"
+
+# Sample 3: github-user-created
+curl -X POST http://172.232.103.232:8000/tasks \
+  -H "Content-Type: application/json" \
+  -d "{\"email\": \"student@example.com\", \"secret\": \"<your-shared-secret>\", \"task\": \"github-user-created\", \"round\": 1, \"nonce\": \"demo-nonce-789\", \"brief\": \"Publish a Bootstrap page with form id=\\\"github-user-seed\\\" that fetches a GitHub username, optionally uses ?token=, and displays the account creation date in YYYY-MM-DD UTC inside #github-created-at.\", \"checks\": [\"document.querySelector('#github-user-seed').tagName === 'FORM'\", \"document.querySelector('#github-created-at').textContent.includes('20')\", \"!!document.querySelector('script').textContent.includes('https://api.github.com/users/')\"], \"evaluation_url\": \"https://webhook.site/<your-id>\", \"attachments\": []}" 
