@@ -37,11 +37,11 @@ Flask-based service that receives structured task briefs, generates web apps wit
    - Adjust optional defaults (`REQUEST_TIMEOUT_SECONDS`, `MAX_RETRIES`, paths).
 4. **Start services** (development view):
    ```bash
-   source .venv/bin/activate
-   nohup python worker.py > worker.log 2>&1 &  # background worker
-   gunicorn --bind 0.0.0.0:8000 wsgi:app
-   ```
-   When ready for production, wrap `gunicorn` and `worker.py` with systemd units and (optionally) place nginx in front.
+ source .venv/bin/activate
+ nohup python worker.py > worker.log 2>&1 &  # background worker
+  gunicorn --bind 0.0.0.0:8000 wsgi:app
+  ```
+  When ready for production, wrap `gunicorn` and `worker.py` with systemd units and (optionally) place nginx in front.
 
 ## API Usage
 ### POST `/tasks`
@@ -96,6 +96,14 @@ Open `testing/index.html` locally in a browser. It provides:
 - The service currently operates over HTTP; front with nginx/reverse proxy as needed.
 - `notes/` is ignored by git—use it only for planning, not runtime assets.
 - When updating this service itself, pull latest changes, reactivate the virtualenv, rerun `pip install -r requirements.txt` if dependencies changed, restart `worker.py` and your `gunicorn` process, and redeploy nginx config if modified.
+- To restart quickly, terminate old processes and relaunch:
+  ```bash
+  source .venv/bin/activate
+  pkill -f "python worker.py" || true
+  pkill -f "gunicorn" || true
+  nohup python worker.py > worker.log 2>&1 &
+  nohup gunicorn --bind 0.0.0.0:8000 wsgi:app > gunicorn.log 2>&1 &
+  ```
 
 ## Updating Generated Apps (Round ≥ 2)
 - The API automatically detects existing repositories for a task and reuses them during later rounds.
