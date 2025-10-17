@@ -6,6 +6,7 @@ import re
 import subprocess
 import time
 import shutil
+import textwrap
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -56,6 +57,14 @@ def generate_repo_name(task: str) -> str:
     return f"{slug}-{suffix}"
 
 
+def _shorten_description(description: str) -> str:
+    if not description:
+        return ""
+    # Collapse whitespace and shorten without cutting words mid-stream.
+    collapsed = " ".join(description.split())
+    return textwrap.shorten(collapsed, width=140, placeholder="…")
+
+
 class GitHubClient:
     def __init__(
         self,
@@ -94,7 +103,7 @@ class GitHubClient:
         )
         payload = {
             "name": name,
-            "description": description[:140],
+            "description": _shorten_description(description),
             "private": False,
             "auto_init": False,
         }
@@ -143,9 +152,16 @@ class GitHubClient:
         return commit_sha
 
     def ensure_license(self, workspace: Path) -> None:
-        license_path = workspace / "LICENSE"
-        if license_path.exists():
+        license_candidates = [
+            "LICENSE",
+            "LICENSE.md",
+            "LICENSE.txt",
+            "MIT-LICENSE",
+            "MIT_LICENSE",
+        ]
+        if any((workspace / candidate).exists() for candidate in license_candidates):
             return
+        license_path = workspace / "LICENSE"
         content = MIT_LICENSE_TEXT.format(
             year=time.strftime("%Y"),
             owner=self.owner,

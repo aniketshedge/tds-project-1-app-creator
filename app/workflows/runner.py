@@ -126,7 +126,6 @@ def _validate_attachments(request: TaskRequest, limit: int) -> None:
 
 
 def _default_readme(request: TaskRequest) -> str:
-    checks = "\n".join(f"- {check}" for check in request.checks) or "- Not specified"
     attachments = "\n".join(f"- {att.name}" for att in request.attachments) or "- None"
     return dedent(
         f"""
@@ -134,17 +133,23 @@ def _default_readme(request: TaskRequest) -> str:
 
         This repository was generated automatically for task `{request.task}` (round {request.round}).
 
-        ## Brief
+        ## Overview
         {request.brief}
 
-        ## Evaluation Checks
-        {checks}
+        ## Getting Started
+        1. Visit the published GitHub Pages site for an interactive preview.
+        2. Review the generated source files in this repository to understand the implementation details.
+
+        ## Usage Notes
+        - The app is designed to run as a static site on GitHub Pages, so all assets load relative to the repository root.
+        - Attachments provided with the original task request were incorporated during generation.
 
         ## Attachments Included
         {attachments}
 
-        ## Deployment
-        The site is deployed via GitHub Pages. Update the repository and push to trigger a new deployment.
+        ## Maintenance
+        - Update the repository and push to `main` to trigger a fresh GitHub Pages deployment.
+        - Adjust environment variables or content in future rounds as described in incoming briefs.
         """
     ).strip()
 
