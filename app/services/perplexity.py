@@ -25,23 +25,28 @@ class PerplexityClient:
 
         for attempt in range(1, self.max_retries + 1):
             logger.info("Requesting manifest from Perplexity (attempt %d)", attempt)
+            payload = {
+                "model": self.model,
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": "You are an autonomous senior software engineer focused on static site generation. Always respond with strict JSON that matches the requested schema.",
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                "max_tokens": 2000,
+            }
+
+            if "reasoning" in self.model:
+                payload["reasoning"] = {"enable": True}
+
             response = requests.post(
                 API_URL,
                 headers={
                     "Authorization": f"Bearer {self.api_key}",
                     "Content-Type": "application/json",
                 },
-                json={
-                    "model": self.model,
-                    "messages": [
-                        {
-                            "role": "system",
-                            "content": "You are an autonomous senior software engineer focused on static site generation. Always respond with strict JSON that matches the requested schema.",
-                        },
-                        {"role": "user", "content": prompt},
-                    ],
-                    "max_tokens": 2000,
-                },
+                json=payload,
                 timeout=self.timeout,
             )
 

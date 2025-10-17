@@ -145,10 +145,11 @@ def _collect_placeholders(request: TaskRequest) -> set[str]:
 
 
 def _validate_manifest_content(manifest: Manifest, required_tokens: set[str]) -> None:
-    if manifest.readme is None or not manifest.readme.strip():
-        raise ValueError("Manifest did not include README content")
-
-    text_blobs: list[str] = [manifest.readme]
+    text_blobs: list[str] = []
+    if manifest.readme and manifest.readme.strip():
+        text_blobs.append(manifest.readme)
+    else:
+        logger.warning("Manifest missing README content; fallback README will be used")
     for item in manifest.files:
         if item.encoding == "text":
             text_blobs.append(item.content)
