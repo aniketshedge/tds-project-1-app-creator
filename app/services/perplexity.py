@@ -112,9 +112,10 @@ Requirements:
   "readme": "optional README.md content",
   "commands": ["optional shell command to run before deployment"]
 }}
-- Preserve placeholder tokens exactly as provided (e.g., `${{seed}}`, `${{result}}`, `${{nonce}}`) without substituting example values.
+- Preserve placeholder tokens exactly as provided (e.g., `${{seed}}`, `${{result}}`, `${{nonce}}`) without substituting example values. Treat them as template variables (Example: `document.title = \`Sales Summary ${{seed}}\`` is correct; `document.title = 'Sales Summary seed'` is incorrect.).
 - Exclude evaluator checks from README or other user-facing docs; instead provide a professional README with sections for Overview, Getting Started, Usage, and task-specific notes.
 - Write code defensively when consuming attachments (e.g., trim blank rows, guard against malformed data) to prevent runtime errors.
+- When parsing CSV data, split the string into rows before splitting columns (e.g., `const header = rows[0].split(',')`); never call `.split` on an array.
 - Do not use Node.js or other server-only APIs (e.g., `require`, `module.exports`, `process`, `fs`)—the output must run entirely in the browser.
 - All HTML assets must be self-contained (no server runtime for the deployed site).
 - Include an MIT LICENSE file if not already provided.
