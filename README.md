@@ -36,11 +36,11 @@ Flask-based service that receives structured task briefs, generates web apps wit
      - `GITHUB_USERNAME`, `GITHUB_EMAIL`, optional `GITHUB_ORG`
    - Adjust optional defaults (`REQUEST_TIMEOUT_SECONDS`, `MAX_RETRIES`, paths).
 4. **Start services** (development view):
-   ```bash
- source .venv/bin/activate
- nohup python worker.py > worker.log 2>&1 &  # background worker
-  gunicorn --bind 0.0.0.0:8000 wsgi:app
-  ```
+    ```bash
+    source .venv/bin/activate
+    nohup python worker.py > worker.log 2>&1 &  # background worker
+    gunicorn --bind 0.0.0.0:8000 wsgi:app
+    ```
   When ready for production, wrap `gunicorn` and `worker.py` with systemd units and (optionally) place nginx in front.
 
 ## API Usage
