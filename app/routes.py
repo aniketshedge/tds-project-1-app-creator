@@ -24,9 +24,9 @@ def register_routes(app: Flask) -> None:
         response.headers.setdefault("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         return response
 
-    @app.options("/tasks")
+    @app.route("/tasks", methods=["OPTIONS"])
     def options_tasks():
-        return ({}, 204)
+        return "", 204
 
     @app.get("/health")
     def healthcheck() -> tuple[dict[str, str], int]:
