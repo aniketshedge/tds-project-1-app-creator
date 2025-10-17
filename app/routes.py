@@ -17,6 +17,17 @@ logger = logging.getLogger(__name__)
 def register_routes(app: Flask) -> None:
     """Attach HTTP routes to the Flask app."""
 
+    @app.after_request
+    def add_cors_headers(response):
+        response.headers.setdefault("Access-Control-Allow-Origin", "*")
+        response.headers.setdefault("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        response.headers.setdefault("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        return response
+
+    @app.options("/tasks")
+    def options_tasks():
+        return ({}, 204)
+
     @app.get("/health")
     def healthcheck() -> tuple[dict[str, str], int]:
         return {"status": "ok"}, 200

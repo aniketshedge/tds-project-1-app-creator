@@ -18,15 +18,21 @@ class WorkspaceManager:
         self.job_id = job_id
         self.path = self.root / job_id
         self.path.mkdir(parents=True, exist_ok=True)
+        self._license_written = False
 
     def write_manifest(self, manifest: Manifest) -> None:
         for item in manifest.files:
             target = self.path / item.path
+            if self._is_duplicate_license(target):
+                logger.info("Skipping duplicate license file %s", target)
+                continue
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(item.bytes_content())
             if item.executable:
                 target.chmod(target.stat().st_mode | stat.S_IEXEC)
             logger.info("Wrote manifest file %s", target)
+            if self._looks_like_license(target):
+                self._license_written = True
 
         if manifest.readme:
             readme_path = self.path / "README.md"
@@ -67,3 +73,16 @@ class WorkspaceManager:
         if self.path.exists():
             shutil.rmtree(self.path)
             logger.info("Cleaned workspace %s", self.path)
+
+    def _looks_like_license(self, path: Path) -> bool:
+        normalized = path.name.lower()
+        return normalized in {
+            "license",
+            "license.md",
+            "license.txt",
+            "mit-license",
+            "mit.txt",
+        }
+
+    def _is_duplicate_license(self, target: Path) -> bool:
+        return self._license_written and self._looks_like_license(target)

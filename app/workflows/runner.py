@@ -174,6 +174,8 @@ def _validate_manifest_content(manifest: Manifest, required_tokens: set[str]) ->
         lowered = item.content.lower()
         if any(marker in lowered for marker in forbidden_markers):
             raise ValueError(f"Disallowed server-side API detected in {item.path}")
+        if "lines.split(" in item.content:
+            raise ValueError(f"Suspicious CSV handling detected in {item.path}")
 
 
 def _validate_attachments(request: TaskRequest, limit: int) -> None:
