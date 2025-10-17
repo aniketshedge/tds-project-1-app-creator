@@ -93,11 +93,13 @@ def process_job(job_id: str) -> None:
         else:
             repo_name = generate_repo_name(task_request.task)
 
+        repo_description = _extract_description(manifest, task_request)
+
         deployment = github.deploy(
             workspace.path,
             manifest,
             repo_name,
-            task_request.brief,
+            repo_description,
             existing_repo_full_name=existing_repo_full_name,
             force=force_push,
         )
@@ -219,3 +221,38 @@ def _repo_full_name_from_url(url: str) -> str:
     if url.startswith(prefix):
         return url[len(prefix) :].rstrip("/")
     return url.rstrip("/")
+
+
+def _extract_description(manifest: Manifest, request: TaskRequest) -> str:
+    readme_source = manifest.readme
+    if not readme_source or not readme_source.strip():
+        readme_source = _default_readme(request)
+
+    overview = _extract_overview_section(readme_source)
+    if not overview:
+        overview = request.brief
+
+    condensed = " ".join(overview.split())
+    return condensed
+
+
+def _extract_overview_section(readme_text: str) -> str:
+    lines = readme_text.splitlines()
+    collecting = False
+    overview_lines: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if stripped.lower().startswith("## overview"):
+            collecting = True
+            continue
+        if collecting:
+            if stripped.startswith("## "):
+                break
+            overview_lines.append(line)
+
+    if overview_lines:
+        return "\n".join(overview_lines).strip()
+
+    # Fallback: use the first non-empty paragraph
+    paragraphs = [block.strip() for block in readme_text.split("\n\n") if block.strip()]
+    return paragraphs[0] if paragraphs else ""
