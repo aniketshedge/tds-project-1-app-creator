@@ -1,0 +1,24 @@
+curl \
+  -X POST \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "<student@example.com>",
+    "secret": "<shared-secret>",
+    "task": "sum-of-sales",
+    "round": 1,
+    "nonce": "<unique-nonce>",
+    "brief": "Publish a single-page site that fetches data.csv from attachments, sums its sales column, sets the title to \"Sales Summary <seed>\", displays the total inside #total-sales, and loads Bootstrap 5 from jsdelivr.",
+    "checks": [
+      "document.title === `Sales Summary <seed>`",
+      "!!document.querySelector(\"link[href*='bootstrap']\")",
+      "Math.abs(parseFloat(document.querySelector(\"#total-sales\").textContent) - <result>) < 0.01"
+    ],
+    "evaluation_url": "<https://example.com/notify>",
+    "attachments": [
+      {
+        "name": "data.csv",
+        "url": "data:text/csv;base64,<base64-data>"
+      }
+    ]
+  }' \
+  http://172.232.103.232:8000/tasks

@@ -63,7 +63,7 @@ Submit JSON matching the brief structure (see `notes/project-llm-code-deployment
 ```
 
 **Responses**
-- `202 Accepted` with `{"job_id": "...", "status": "queued"}` when enqueued.
+- `200 OK` with `{"job_id": "...", "status": "queued"}` when enqueued.
 - `400 Bad Request` on validation issues.
 - `403 Forbidden` if the `secret` mismatches.
 

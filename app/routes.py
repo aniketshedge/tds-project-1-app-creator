@@ -50,8 +50,10 @@ def register_routes(app: Flask) -> None:
         queue.enqueue("app.workflows.runner.process_job", job_id)
 
         response = {"job_id": job_id, "status": "queued"}
-        logger.info("Queued job %s for task_id=%s round=%s", job_id, task_request.task, task_request.round)
-        return response, 202
+        logger.info(
+            "Queued job %s for task_id=%s round=%s", job_id, task_request.task, task_request.round
+        )
+        return response, 200
 
     @app.get("/tasks/<job_id>")
     def get_task(job_id: str) -> tuple[dict[str, object], int]:

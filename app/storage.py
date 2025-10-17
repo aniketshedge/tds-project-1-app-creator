@@ -49,7 +49,7 @@ class TaskRepository:
             conn.close()
 
     def record_task(self, job_id: str, request: TaskRequest) -> None:
-        payload = request.model_dump()
+        payload = request.model_dump(mode="json")
         now = self._now_iso()
         with self._connection() as conn:
             conn.execute(
