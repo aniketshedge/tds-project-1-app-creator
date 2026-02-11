@@ -227,25 +227,14 @@ button.ghost {
   color: var(--muted);
 }
 
-.label-with-info {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.info-icon {
-  display: inline-grid;
-  place-items: center;
-  width: 16px;
-  height: 16px;
-  border-radius: 999px;
-  border: 1px solid #8aa2e8;
-  background: #eef3ff;
-  color: #2148c8;
-  font-size: 0.72rem;
-  line-height: 1;
-  font-weight: 700;
-  cursor: help;
+.private-pages-note {
+  margin: 2px 0 4px;
+  padding: 8px 10px;
+  border: 1px solid #f2c58f;
+  border-radius: 10px;
+  background: #fff4e5;
+  color: #7a3906;
+  font-size: 0.9rem;
 }
 
 .split {

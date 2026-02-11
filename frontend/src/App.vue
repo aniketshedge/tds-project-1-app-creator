@@ -48,6 +48,7 @@ const ACTIVE_JOB_STATUSES = new Set(["queued", "in_progress", "deployed"]);
 const pagesLinkHoverTitle = "GitHub Pages can take a few minutes to become live after deployment.";
 
 const canCreateJob = computed(() => integrations.value.github.connected && integrations.value.llm.configured);
+const hasSavedLlmConfig = computed(() => integrations.value.llm.configured);
 const selectedPagesUrl = computed(() => buildPagesUrl(selectedJob.value));
 const isSelectedPagesUrlEstimated = computed(
   () => Boolean(selectedJob.value && !selectedJob.value.pages_url && selectedPagesUrl.value)
@@ -134,6 +135,9 @@ async function refreshIntegrations() {
   if (integrations.value.llm.model) {
     llmForm.model = integrations.value.llm.model;
   }
+  if (!integrations.value.llm.configured) {
+    llmConfigExpanded.value = true;
+  }
 }
 
 async function startGithubAuth() {
@@ -199,8 +203,8 @@ async function saveLlmConfig() {
   }
 }
 
-function toggleLlmConfig() {
-  llmConfigExpanded.value = !llmConfigExpanded.value;
+function startLlmConfigChange() {
+  llmConfigExpanded.value = true;
 }
 
 function onAttachmentChange(event) {
@@ -367,6 +371,15 @@ watch(showActiveOnlyJobs, () => {
   syncSelectedJobWithFilters();
 });
 
+watch(
+  () => jobForm.visibility,
+  (visibility) => {
+    if (visibility === "private") {
+      jobForm.enablePages = false;
+    }
+  }
+);
+
 onMounted(async () => {
   const params = new URLSearchParams(window.location.search);
   if (params.get("github") === "connected") {
@@ -434,12 +447,17 @@ onBeforeUnmount(() => {
         <div class="stack llm-section">
           <div class="llm-head">
             <h3>LLM Provider</h3>
-            <button class="ghost" type="button" @click="toggleLlmConfig">
-              {{ llmConfigExpanded ? "Hide LLM Config" : "Change LLM Config" }}
+            <button
+              v-if="hasSavedLlmConfig && !llmConfigExpanded"
+              class="ghost"
+              type="button"
+              @click="startLlmConfigChange"
+            >
+              Change LLM Config
             </button>
           </div>
 
-          <p v-if="integrations.llm.configured && !llmConfigExpanded" class="hint">
+          <p v-if="hasSavedLlmConfig && !llmConfigExpanded" class="hint">
             Configured: <strong>{{ integrations.llm.provider }}</strong> ({{ integrations.llm.model }})
           </p>
 
@@ -475,20 +493,17 @@ onBeforeUnmount(() => {
             <input v-model="jobForm.repoName" type="text" required />
           </label>
           <label>
-            <span class="label-with-info">
-              Visibility
-              <span
-                v-if="jobForm.visibility === 'private'"
-                class="info-icon"
-                title="GitHub Pages may not be available for private repositories on your current plan."
-                >i</span
-              >
-            </span>
+            Visibility
             <select v-model="jobForm.visibility">
               <option value="public">Public</option>
               <option value="private">Private</option>
             </select>
           </label>
+
+          <p v-if="jobForm.visibility === 'private'" class="private-pages-note">
+            Private repositories may not support GitHub Pages on your current plan. Pages is disabled.
+          </p>
+
           <label>
             Brief
             <textarea v-model="jobForm.brief" rows="7" required></textarea>
@@ -506,7 +521,7 @@ onBeforeUnmount(() => {
           </div>
 
           <label class="check-row">
-            <input v-model="jobForm.enablePages" type="checkbox" />
+            <input v-model="jobForm.enablePages" type="checkbox" :disabled="jobForm.visibility === 'private'" />
             Enable GitHub Pages after push
           </label>
 
@@ -531,6 +546,7 @@ onBeforeUnmount(() => {
             <button class="ghost" type="button" @click="refreshJobsPanel">Refresh</button>
           </div>
         </div>
+
         <p v-if="hiddenJobCount > 0" class="hint">
           Showing active jobs only. {{ hiddenJobCount }} completed/failed job(s) hidden.
         </p>
@@ -553,15 +569,13 @@ onBeforeUnmount(() => {
           <h3>Selected Job</h3>
           <p><strong>ID:</strong> {{ selectedJob.job_id }}</p>
           <p><strong>Status:</strong> {{ selectedJob.status }}</p>
-          <p><strong>Repo:</strong> <a :href="selectedJob.repo_url" target="_blank">{{ selectedJob.repo_url || "-" }}</a></p>
+          <p>
+            <strong>Repo:</strong>
+            <a :href="selectedJob.repo_url" target="_blank">{{ selectedJob.repo_url || "-" }}</a>
+          </p>
           <p>
             <strong>Pages:</strong>
-            <a
-              v-if="selectedPagesUrl"
-              :href="selectedPagesUrl"
-              target="_blank"
-              :title="pagesLinkHoverTitle"
-            >
+            <a v-if="selectedPagesUrl" :href="selectedPagesUrl" target="_blank" :title="pagesLinkHoverTitle">
               {{ selectedPagesUrl }}{{ isSelectedPagesUrlEstimated ? " (estimated)" : "" }}
             </a>
             <span v-else>-</span>
