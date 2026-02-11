@@ -62,6 +62,10 @@ def process_job(job_id: str) -> None:
 
         llm_secret = secrets["llm"]
         github_secret = secrets["github"]
+        github_token = github_secret.get("access_token")
+        github_username = github_secret.get("username")
+        if not github_token or not github_username:
+            raise RuntimeError("Missing GitHub App access token for this job")
 
         model = llm_secret.get("model") or settings.perplexity_default_model
         repository.append_event(job_id, "info", f"Generating app files with {llm_secret['provider']}")
@@ -81,8 +85,8 @@ def process_job(job_id: str) -> None:
             workspace.run_commands(manifest.commands)
 
         github = GitHubClient(
-            token=github_secret["access_token"],
-            username=github_secret["username"],
+            token=github_token,
+            username=github_username,
             default_branch=job_payload.deployment.branch,
             timeout=settings.request_timeout_seconds,
             max_retries=settings.max_retries,

@@ -15,14 +15,14 @@ Self-hosted service for generating and deploying static web apps from natural-la
 - `redis` stores queue data and ephemeral session credentials.
 
 Sensitive data policy:
-- GitHub OAuth token and LLM API key are stored only in Redis with TTL.
+- GitHub App user token and LLM API key are stored only in Redis with TTL.
 - Secrets are not persisted in SQLite.
 - Job secret snapshots are deleted after job completion/failure.
 
 ## Core Flow
 
 1. Browser gets a session cookie from `/api/session`.
-2. User connects GitHub via OAuth.
+2. User connects GitHub via GitHub App user authorization.
 3. User configures LLM provider (currently Perplexity) using an API key.
 4. User submits a job (brief + optional attachments).
 5. Worker generates files with the LLM, creates a GitHub repo, pushes code, enables Pages.
@@ -76,10 +76,11 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Set GitHub OAuth values in `.env`:
-- `GITHUB_OAUTH_CLIENT_ID`
-- `GITHUB_OAUTH_CLIENT_SECRET`
-- `GITHUB_OAUTH_REDIRECT_URI`
+Set GitHub App values in `.env`:
+- `GITHUB_APP_CLIENT_ID`
+- `GITHUB_APP_CLIENT_SECRET`
+- `GITHUB_APP_CALLBACK_URL`
+- optional: `GITHUB_APP_SLUG` (used to expose an install URL in API response)
 
 Run Redis locally, then:
 
@@ -120,11 +121,18 @@ Services:
 - Worker: background queue processor
 - Redis: ephemeral in-memory store (persistence disabled)
 
-## GitHub OAuth Setup
+## GitHub App Setup
 
-Create a GitHub OAuth app:
+Create a GitHub App with user authorization enabled:
 - Homepage URL: your app URL (example `http://localhost:8000`)
-- Authorization callback URL: `http://localhost:8000/api/auth/github/callback`
+- Callback URL: `http://localhost:8000/api/auth/github/callback`
+- Permissions: repository write permissions required for creating repos, pushing code, and managing Pages
+
+Then copy:
+- App client ID -> `GITHUB_APP_CLIENT_ID`
+- App client secret -> `GITHUB_APP_CLIENT_SECRET`
+- Callback URL -> `GITHUB_APP_CALLBACK_URL`
+- App slug -> `GITHUB_APP_SLUG` (optional)
 
 For production behind Cloudflare, set callback URL to your public domain path.
 

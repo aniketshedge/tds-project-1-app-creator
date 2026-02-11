@@ -11,7 +11,11 @@ from pydantic import ValidationError
 
 from .config import Settings
 from .models import JobCreatePayload, LLMIntegrationRequest
-from .services.github_oauth import build_auth_url, exchange_code_for_token, fetch_user_profile
+from .services.github_app_auth import (
+    build_user_authorization_url,
+    exchange_code_for_user_token,
+    fetch_user_profile,
+)
 from .services.session_store import SessionStore
 from .storage import TaskRepository
 
@@ -102,27 +106,31 @@ def register_routes(app: Flask) -> None:
         return response
 
     @app.get("/api/auth/github/start")
-    def github_oauth_start() -> Response:
+    def github_auth_start() -> Response:
         session_id, is_new = _get_or_create_session()
         settings: Settings = current_app.config["settings"]
         store: SessionStore = current_app.config["session_store"]
 
         state = uuid4().hex
-        store.store_oauth_state(session_id, state)
-        auth_url = build_auth_url(
-            client_id=settings.github_oauth_client_id,
-            redirect_uri=settings.github_oauth_redirect_uri,
-            scope=settings.github_oauth_scope,
+        store.store_github_state(session_id, state)
+        auth_url = build_user_authorization_url(
+            client_id=settings.github_app_client_id,
+            callback_url=settings.github_app_callback_url,
+            scope=settings.github_app_scope,
             state=state,
         )
 
-        response = jsonify({"url": auth_url})
+        payload: dict[str, object] = {"url": auth_url}
+        if settings.github_app_slug:
+            payload["install_url"] = f"https://github.com/apps/{settings.github_app_slug}/installations/new"
+
+        response = jsonify(payload)
         if is_new:
             _set_session_cookie(response, session_id, settings)
         return response
 
     @app.get("/api/auth/github/callback")
-    def github_oauth_callback() -> Response:
+    def github_auth_callback() -> Response:
         settings: Settings = current_app.config["settings"]
         store: SessionStore = current_app.config["session_store"]
         session_id = request.cookies.get(settings.session_cookie_name)
@@ -130,7 +138,7 @@ def register_routes(app: Flask) -> None:
         if not session_id:
             return redirect(f"{settings.frontend_callback_path}?github=error&reason=no_session")
 
-        expected_state = store.consume_oauth_state(session_id)
+        expected_state = store.consume_github_state(session_id)
         received_state = request.args.get("state")
         code = request.args.get("code")
 
@@ -140,27 +148,33 @@ def register_routes(app: Flask) -> None:
             return redirect(f"{settings.frontend_callback_path}?github=error&reason=missing_code")
 
         try:
-            access_token = exchange_code_for_token(
-                client_id=settings.github_oauth_client_id,
-                client_secret=settings.github_oauth_client_secret,
+            token_payload = exchange_code_for_user_token(
+                client_id=settings.github_app_client_id,
+                client_secret=settings.github_app_client_secret,
                 code=code,
-                redirect_uri=settings.github_oauth_redirect_uri,
+                callback_url=settings.github_app_callback_url,
                 timeout=settings.request_timeout_seconds,
             )
-            profile = fetch_user_profile(access_token, timeout=settings.request_timeout_seconds)
+            profile = fetch_user_profile(
+                token_payload["access_token"],
+                timeout=settings.request_timeout_seconds,
+            )
             store.store_github_credentials(
                 session_id=session_id,
-                access_token=access_token,
+                access_token=token_payload["access_token"],
+                refresh_token=token_payload.get("refresh_token"),
+                access_token_expires_in=token_payload.get("expires_in"),
+                refresh_token_expires_in=token_payload.get("refresh_token_expires_in"),
                 username=profile["username"],
             )
         except Exception:
-            logger.exception("GitHub OAuth callback failed")
+            logger.exception("GitHub App callback failed")
             return redirect(f"{settings.frontend_callback_path}?github=error&reason=exchange_failed")
 
         return redirect(f"{settings.frontend_callback_path}?github=connected")
 
     @app.post("/api/auth/github/disconnect")
-    def github_oauth_disconnect() -> Response:
+    def github_auth_disconnect() -> Response:
         session_id, is_new = _get_or_create_session()
         settings: Settings = current_app.config["settings"]
         store: SessionStore = current_app.config["session_store"]
@@ -194,7 +208,7 @@ def register_routes(app: Flask) -> None:
                 jsonify(
                     {
                         "error": "integrations_required",
-                        "message": "Configure both GitHub OAuth and LLM provider before creating a job",
+                        "message": "Configure both GitHub App and LLM provider before creating a job",
                     }
                 ),
                 400,

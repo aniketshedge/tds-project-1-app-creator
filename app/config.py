@@ -18,10 +18,11 @@ class Settings(BaseSettings):
     session_ttl_seconds: int = 86_400
     session_cookie_secure: bool = False
 
-    github_oauth_client_id: str
-    github_oauth_client_secret: str
-    github_oauth_redirect_uri: str
-    github_oauth_scope: str = "repo read:user user:email"
+    github_app_client_id: str
+    github_app_client_secret: str
+    github_app_callback_url: str
+    github_app_scope: str = "repo read:user user:email"
+    github_app_slug: str = ""
     frontend_callback_path: str = "/integrations"
 
     # Queue / storage

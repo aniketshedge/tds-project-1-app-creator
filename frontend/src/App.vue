@@ -86,7 +86,7 @@ async function startGithubAuth() {
     const data = await api("/api/auth/github/start");
     window.location.href = data.url;
   } catch (error) {
-    flash.value = `GitHub OAuth start failed: ${error.message}`;
+    flash.value = `GitHub App authorization start failed: ${error.message}`;
   }
 }
 
@@ -293,7 +293,7 @@ onBeforeUnmount(() => {
 
         <div class="integration-row">
           <div>
-            <h3>GitHub OAuth</h3>
+            <h3>GitHub App</h3>
             <p v-if="integrations.github.connected">
               Connected as <strong>{{ integrations.github.username }}</strong>
             </p>
