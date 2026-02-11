@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     github_app_callback_url: str
     github_app_scope: str = "repo read:user user:email"
     github_app_slug: str = ""
-    frontend_callback_path: str = "/integrations"
+    frontend_callback_path: str = "/"
 
     # Queue / storage
     redis_url: str = "redis://127.0.0.1:6379/0"

@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 from pathlib import Path
+from urllib.parse import urlencode
 from uuid import uuid4
 
 from flask import Flask, Response, current_app, jsonify, redirect, request, send_from_directory
@@ -136,16 +137,16 @@ def register_routes(app: Flask) -> None:
         session_id = request.cookies.get(settings.session_cookie_name)
 
         if not session_id:
-            return redirect(f"{settings.frontend_callback_path}?github=error&reason=no_session")
+            return redirect(_frontend_redirect_url(settings, status="error", reason="no_session"))
 
         expected_state = store.consume_github_state(session_id)
         received_state = request.args.get("state")
         code = request.args.get("code")
 
         if not expected_state or not received_state or expected_state != received_state:
-            return redirect(f"{settings.frontend_callback_path}?github=error&reason=invalid_state")
+            return redirect(_frontend_redirect_url(settings, status="error", reason="invalid_state"))
         if not code:
-            return redirect(f"{settings.frontend_callback_path}?github=error&reason=missing_code")
+            return redirect(_frontend_redirect_url(settings, status="error", reason="missing_code"))
 
         try:
             token_payload = exchange_code_for_user_token(
@@ -169,9 +170,9 @@ def register_routes(app: Flask) -> None:
             )
         except Exception:
             logger.exception("GitHub App callback failed")
-            return redirect(f"{settings.frontend_callback_path}?github=error&reason=exchange_failed")
+            return redirect(_frontend_redirect_url(settings, status="error", reason="exchange_failed"))
 
-        return redirect(f"{settings.frontend_callback_path}?github=connected")
+        return redirect(_frontend_redirect_url(settings, status="connected"))
 
     @app.post("/api/auth/github/disconnect")
     def github_auth_disconnect() -> Response:
@@ -382,6 +383,19 @@ def _set_session_cookie(response: Response, session_id: str, settings: Settings)
         samesite="Lax",
         path="/",
     )
+
+
+def _frontend_redirect_url(settings: Settings, *, status: str, reason: str | None = None) -> str:
+    path = (settings.frontend_callback_path or "/").strip()
+    if not path.startswith("/"):
+        path = f"/{path}"
+    if path.startswith("/api/"):
+        path = "/"
+
+    query = {"github": status}
+    if reason:
+        query["reason"] = reason
+    return f"{path}?{urlencode(query)}"
 
 
 def _serialize_job(job) -> dict[str, object]:

@@ -106,6 +106,20 @@ class GitHubClient:
                 logger.info("Repository name collision for %s, retrying", candidate)
                 continue
 
+            if response.status_code == 403:
+                try:
+                    message = response.json().get("message", "")
+                except ValueError:
+                    message = response.text
+                if "Resource not accessible by integration" in message:
+                    raise RuntimeError(
+                        "GitHub App token cannot create repositories for this account. "
+                        "Verify the app has Repository Administration: Read and write, "
+                        "the app is installed on this user account, installation access includes "
+                        "new repositories (use All repositories for testing), and the user has "
+                        "re-authorized after permission changes."
+                    )
+
             raise RuntimeError(f"GitHub repo creation failed: {response.text}")
 
         raise RuntimeError("Could not create a unique GitHub repository name")
@@ -125,6 +139,11 @@ class GitHubClient:
         (workspace / "LICENSE").write_text(content, encoding="utf-8")
 
     def push_workspace(self, workspace: Path, repo_full_name: str, branch: str) -> str:
+        if shutil.which("git") is None:
+            raise RuntimeError(
+                "Git binary not found in runtime environment. Install git in the host/container before deployment."
+            )
+
         env = os.environ.copy()
         env["GIT_TERMINAL_PROMPT"] = "0"
         remote = f"https://x-access-token:{self.token}@github.com/{repo_full_name}.git"
