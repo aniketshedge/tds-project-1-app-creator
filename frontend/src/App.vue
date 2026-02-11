@@ -6,11 +6,13 @@ const integrations = ref({
   github: { connected: false, username: null },
   llm: { configured: false, provider: null, model: null },
 });
+
 const jobs = ref([]);
 const selectedJobId = ref("");
 const selectedJob = ref(null);
 const events = ref([]);
 const nextAfter = ref(0);
+
 const busy = reactive({
   bootstrap: true,
   savingLlm: false,
@@ -18,7 +20,10 @@ const busy = reactive({
   resettingSession: false,
   githubAuthFlow: false,
 });
+
 const flash = ref("");
+const llmConfigExpanded = ref(true);
+const showActiveOnlyJobs = ref(true);
 
 const llmForm = reactive({
   provider: "perplexity",
@@ -39,7 +44,22 @@ const jobForm = reactive({
 const attachmentFiles = ref([]);
 const pollHandle = ref(null);
 
+const ACTIVE_JOB_STATUSES = new Set(["queued", "in_progress", "deployed"]);
+const pagesLinkHoverTitle = "GitHub Pages can take a few minutes to become live after deployment.";
+
 const canCreateJob = computed(() => integrations.value.github.connected && integrations.value.llm.configured);
+const selectedPagesUrl = computed(() => buildPagesUrl(selectedJob.value));
+const isSelectedPagesUrlEstimated = computed(
+  () => Boolean(selectedJob.value && !selectedJob.value.pages_url && selectedPagesUrl.value)
+);
+const displayedJobs = computed(() =>
+  showActiveOnlyJobs.value
+    ? jobs.value.filter((job) => ACTIVE_JOB_STATUSES.has(job.status))
+    : jobs.value
+);
+const hiddenJobCount = computed(() =>
+  showActiveOnlyJobs.value ? Math.max(jobs.value.length - displayedJobs.value.length, 0) : 0
+);
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -58,16 +78,48 @@ async function api(path, options = {}) {
   return response.json();
 }
 
+function dedupeJobs(jobList) {
+  const uniqueJobs = [];
+  const seen = new Set();
+  for (const job of jobList || []) {
+    if (seen.has(job.job_id)) {
+      continue;
+    }
+    seen.add(job.job_id);
+    uniqueJobs.push(job);
+  }
+  return uniqueJobs;
+}
+
+function syncSelectedJobWithFilters() {
+  if (!selectedJobId.value) {
+    return;
+  }
+  const stillVisible = displayedJobs.value.some((job) => job.job_id === selectedJobId.value);
+  if (!stillVisible) {
+    selectedJobId.value = "";
+    selectedJob.value = null;
+    events.value = [];
+    nextAfter.value = 0;
+  }
+}
+
 async function bootstrap() {
   busy.bootstrap = true;
   try {
     session.value = await api("/api/session");
     integrations.value = await api("/api/integrations");
-    const jobResponse = await api("/api/jobs");
-    jobs.value = jobResponse.jobs;
 
-    if (jobs.value.length > 0) {
-      selectedJobId.value = jobs.value[0].job_id;
+    llmConfigExpanded.value = !integrations.value.llm.configured;
+    if (integrations.value.llm.model) {
+      llmForm.model = integrations.value.llm.model;
+    }
+
+    const jobResponse = await api("/api/jobs");
+    jobs.value = dedupeJobs(jobResponse.jobs);
+
+    if (displayedJobs.value.length > 0) {
+      selectedJobId.value = displayedJobs.value[0].job_id;
       await refreshSelectedJob();
     }
   } catch (error) {
@@ -79,6 +131,9 @@ async function bootstrap() {
 
 async function refreshIntegrations() {
   integrations.value = await api("/api/integrations");
+  if (integrations.value.llm.model) {
+    llmForm.model = integrations.value.llm.model;
+  }
 }
 
 async function startGithubAuth() {
@@ -104,8 +159,7 @@ async function installGithubApp() {
         "Install URL is not available. Set GITHUB_APP_SLUG in server environment and restart the app.";
       return;
     }
-    window.open(data.install_url, "_blank", "noopener,noreferrer");
-    flash.value = "GitHub App installation page opened. Install it, then click Connect GitHub.";
+    window.location.href = data.install_url;
   } catch (error) {
     flash.value = `GitHub App install launch failed: ${error.message}`;
   } finally {
@@ -136,12 +190,17 @@ async function saveLlmConfig() {
       }),
     });
     llmForm.api_key = "";
+    llmConfigExpanded.value = false;
     flash.value = "LLM provider configured for this session.";
   } catch (error) {
     flash.value = `Failed to save LLM config: ${error.message}`;
   } finally {
     busy.savingLlm = false;
   }
+}
+
+function toggleLlmConfig() {
+  llmConfigExpanded.value = !llmConfigExpanded.value;
 }
 
 function onAttachmentChange(event) {
@@ -179,7 +238,7 @@ async function createJob() {
     });
 
     const jobResponse = await api("/api/jobs");
-    jobs.value = jobResponse.jobs;
+    jobs.value = dedupeJobs(jobResponse.jobs);
     selectedJobId.value = result.job_id;
     await refreshSelectedJob();
     flash.value = `Job ${result.job_id} queued.`;
@@ -193,17 +252,20 @@ async function createJob() {
 async function refreshJobs() {
   try {
     const jobResponse = await api("/api/jobs");
-    jobs.value = jobResponse.jobs;
-    if (selectedJobId.value) {
-      const stillExists = jobs.value.find((job) => job.job_id === selectedJobId.value);
-      if (!stillExists) {
-        selectedJobId.value = "";
-        selectedJob.value = null;
-      }
-    }
+    jobs.value = dedupeJobs(jobResponse.jobs);
+    syncSelectedJobWithFilters();
   } catch (error) {
     flash.value = `Failed to refresh jobs: ${error.message}`;
   }
+}
+
+async function refreshJobsPanel() {
+  jobs.value = [];
+  selectedJobId.value = "";
+  selectedJob.value = null;
+  events.value = [];
+  nextAfter.value = 0;
+  await refreshJobs();
 }
 
 async function refreshSelectedJob() {
@@ -219,6 +281,9 @@ async function refreshSelectedJob() {
     const eventResult = await api(`/api/jobs/${selectedJobId.value}/events?after=${nextAfter.value}`);
     if (eventResult.events.length > 0) {
       events.value = [...events.value, ...eventResult.events];
+      if (events.value.length > 200) {
+        events.value = events.value.slice(-200);
+      }
       nextAfter.value = eventResult.next_after;
     }
   } catch (error) {
@@ -241,6 +306,34 @@ function stopPolling() {
   }
 }
 
+function buildPagesUrl(job) {
+  if (!job) {
+    return null;
+  }
+  if (job.pages_url) {
+    return job.pages_url;
+  }
+
+  let repoFullName = job.repo_full_name;
+  if (!repoFullName && job.repo_url && job.repo_url.startsWith("https://github.com/")) {
+    repoFullName = job.repo_url.replace("https://github.com/", "");
+  }
+  if (!repoFullName || !repoFullName.includes("/")) {
+    return null;
+  }
+
+  const parts = repoFullName.split("/");
+  if (parts.length !== 2 || !parts[0] || !parts[1]) {
+    return null;
+  }
+  return `https://${parts[0]}.github.io/${parts[1]}/`;
+}
+
+function toggleJobFilter() {
+  showActiveOnlyJobs.value = !showActiveOnlyJobs.value;
+  syncSelectedJobWithFilters();
+}
+
 async function resetSession() {
   busy.resettingSession = true;
   flash.value = "";
@@ -253,6 +346,7 @@ async function resetSession() {
     nextAfter.value = 0;
     llmForm.api_key = "";
     await refreshIntegrations();
+    llmConfigExpanded.value = true;
     flash.value = "Session reset complete. Integrations and pending state were cleared.";
   } catch (error) {
     flash.value = `Failed to reset session: ${error.message}`;
@@ -267,6 +361,10 @@ watch(selectedJobId, async (newValue, oldValue) => {
     nextAfter.value = 0;
     await refreshSelectedJob();
   }
+});
+
+watch(showActiveOnlyJobs, () => {
+  syncSelectedJobWithFilters();
 });
 
 onMounted(async () => {
@@ -333,24 +431,36 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
-        <form class="stack" @submit.prevent="saveLlmConfig">
-          <h3>LLM Provider</h3>
-          <label>
-            Provider
-            <select v-model="llmForm.provider" disabled>
-              <option value="perplexity">Perplexity</option>
-            </select>
-          </label>
-          <label>
-            API Key
-            <input v-model="llmForm.api_key" type="password" required placeholder="pplx-..." />
-          </label>
-          <label>
-            Model
-            <input v-model="llmForm.model" type="text" placeholder="sonar-pro" />
-          </label>
-          <button :disabled="busy.savingLlm">{{ busy.savingLlm ? "Saving..." : "Save LLM Config" }}</button>
-        </form>
+        <div class="stack llm-section">
+          <div class="llm-head">
+            <h3>LLM Provider</h3>
+            <button class="ghost" type="button" @click="toggleLlmConfig">
+              {{ llmConfigExpanded ? "Hide LLM Config" : "Change LLM Config" }}
+            </button>
+          </div>
+
+          <p v-if="integrations.llm.configured && !llmConfigExpanded" class="hint">
+            Configured: <strong>{{ integrations.llm.provider }}</strong> ({{ integrations.llm.model }})
+          </p>
+
+          <form v-if="llmConfigExpanded" class="stack" @submit.prevent="saveLlmConfig">
+            <label>
+              Provider
+              <select v-model="llmForm.provider" disabled>
+                <option value="perplexity">Perplexity</option>
+              </select>
+            </label>
+            <label>
+              API Key
+              <input v-model="llmForm.api_key" type="password" required placeholder="pplx-..." />
+            </label>
+            <label>
+              Model
+              <input v-model="llmForm.model" type="text" placeholder="sonar-pro" />
+            </label>
+            <button :disabled="busy.savingLlm">{{ busy.savingLlm ? "Saving..." : "Save LLM Config" }}</button>
+          </form>
+        </div>
       </section>
 
       <section class="panel">
@@ -365,7 +475,15 @@ onBeforeUnmount(() => {
             <input v-model="jobForm.repoName" type="text" required />
           </label>
           <label>
-            Visibility
+            <span class="label-with-info">
+              Visibility
+              <span
+                v-if="jobForm.visibility === 'private'"
+                class="info-icon"
+                title="GitHub Pages may not be available for private repositories on your current plan."
+                >i</span
+              >
+            </span>
             <select v-model="jobForm.visibility">
               <option value="public">Public</option>
               <option value="private">Private</option>
@@ -406,12 +524,20 @@ onBeforeUnmount(() => {
       <section class="panel">
         <div class="jobs-head">
           <h2>Jobs</h2>
-          <button class="ghost" @click="refreshJobs">Refresh</button>
+          <div class="jobs-actions">
+            <button class="ghost" type="button" @click="toggleJobFilter">
+              {{ showActiveOnlyJobs ? "Show All" : "Show Active Only" }}
+            </button>
+            <button class="ghost" type="button" @click="refreshJobsPanel">Refresh</button>
+          </div>
         </div>
+        <p v-if="hiddenJobCount > 0" class="hint">
+          Showing active jobs only. {{ hiddenJobCount }} completed/failed job(s) hidden.
+        </p>
 
         <div class="jobs-list">
           <button
-            v-for="job in jobs"
+            v-for="job in displayedJobs"
             :key="job.job_id"
             class="job-pill"
             :class="{ selected: selectedJobId === job.job_id }"
@@ -420,7 +546,7 @@ onBeforeUnmount(() => {
             <span>{{ job.title }}</span>
             <strong>{{ job.status }}</strong>
           </button>
-          <p v-if="jobs.length === 0">No jobs yet.</p>
+          <p v-if="displayedJobs.length === 0">No jobs in current filter.</p>
         </div>
 
         <div v-if="selectedJob" class="job-detail">
@@ -428,7 +554,18 @@ onBeforeUnmount(() => {
           <p><strong>ID:</strong> {{ selectedJob.job_id }}</p>
           <p><strong>Status:</strong> {{ selectedJob.status }}</p>
           <p><strong>Repo:</strong> <a :href="selectedJob.repo_url" target="_blank">{{ selectedJob.repo_url || "-" }}</a></p>
-          <p><strong>Pages:</strong> <a :href="selectedJob.pages_url" target="_blank">{{ selectedJob.pages_url || "-" }}</a></p>
+          <p>
+            <strong>Pages:</strong>
+            <a
+              v-if="selectedPagesUrl"
+              :href="selectedPagesUrl"
+              target="_blank"
+              :title="pagesLinkHoverTitle"
+            >
+              {{ selectedPagesUrl }}{{ isSelectedPagesUrlEstimated ? " (estimated)" : "" }}
+            </a>
+            <span v-else>-</span>
+          </p>
           <p><strong>Commit:</strong> <code>{{ selectedJob.commit_sha || "-" }}</code></p>
           <p v-if="selectedJob.error_message" class="error">{{ selectedJob.error_message }}</p>
 
