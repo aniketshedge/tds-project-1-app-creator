@@ -5,49 +5,36 @@ import json
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional
-from urllib.parse import unquote
+from typing import Any, Literal, Optional
 
-from pydantic import AnyHttpUrl, EmailStr, Field, ValidationError
+from pydantic import BaseModel, Field
 from pydantic_settings import SettingsConfigDict
-from pydantic import BaseModel
 
 
-class Attachment(BaseModel):
-    name: str
-    url: str
-
-    def decode(self) -> bytes:
-        if not self.url.startswith("data:"):
-            raise ValueError(f"Unsupported attachment URL for {self.name}")
-        header, data = self.url.split(",", 1)
-        if ";base64" in header:
-            return base64.b64decode(data)
-        return unquote(data).encode("utf-8")
-
-    def media_type(self) -> str:
-        if self.url.startswith("data:"):
-            header = self.url.split(",", 1)[0]
-            return header[5:].split(";")[0] or "application/octet-stream"
-        return "application/octet-stream"
+class RepoConfig(BaseModel):
+    name: str = Field(min_length=1)
+    visibility: Literal["public", "private"] = "public"
 
 
-class TaskRequest(BaseModel):
+class DeploymentConfig(BaseModel):
+    enable_pages: bool = True
+    branch: str = Field(default="main", min_length=1)
+    path: str = "/"
+
+
+class JobCreatePayload(BaseModel):
     model_config = SettingsConfigDict(extra="ignore")
 
-    email: EmailStr
-    secret: str
-    task: str = Field(min_length=1)
-    round: int = Field(ge=1)
-    nonce: str = Field(min_length=1)
+    title: str = Field(min_length=1)
     brief: str = Field(min_length=1)
-    checks: List[str] = Field(default_factory=list)
-    evaluation_url: AnyHttpUrl
-    attachments: List[Attachment] = Field(default_factory=list)
+    repo: RepoConfig
+    deployment: DeploymentConfig = Field(default_factory=DeploymentConfig)
 
-    def to_json(self) -> str:
-        return self.model_dump_json()
+
+class LLMIntegrationRequest(BaseModel):
+    provider: Literal["perplexity"]
+    api_key: str = Field(min_length=1)
+    model: Optional[str] = None
 
 
 class ManifestFile(BaseModel):
@@ -63,12 +50,12 @@ class ManifestFile(BaseModel):
 
 
 class Manifest(BaseModel):
-    files: List[ManifestFile]
+    files: list[ManifestFile]
     readme: Optional[str] = None
-    commands: List[str] = Field(default_factory=list)
+    commands: list[str] = Field(default_factory=list)
 
     @classmethod
-    def from_response(cls, payload: str | Dict[str, Any]) -> "Manifest":
+    def from_response(cls, payload: str | dict[str, Any]) -> "Manifest":
         if isinstance(payload, dict):
             return cls(**payload)
         cleaned = _extract_json(payload)
@@ -79,24 +66,59 @@ class Manifest(BaseModel):
 def _extract_json(candidate: str) -> str:
     match = re.search(r"\{.*\}", candidate, re.DOTALL)
     if not match:
-        raise ValueError("Perplexity response did not contain JSON manifest")
+        raise ValueError("LLM response did not contain JSON manifest")
     return match.group(0)
 
 
 @dataclass
-class TaskRecord:
+class PromptAttachment:
+    file_name: str
+    media_type: str
+    data: bytes
+
+
+@dataclass
+class JobAttachmentRecord:
+    id: int
     job_id: str
-    task: str
-    round: int
+    file_name: str
+    media_type: Optional[str]
+    size_bytes: int
+    sha256: str
+    created_at: datetime
+
+
+@dataclass
+class JobEventRecord:
+    id: int
+    job_id: str
+    level: str
+    message: str
+    created_at: datetime
+
+
+@dataclass
+class JobRecord:
+    id: str
+    session_id: str
+    title: str
+    brief: str
+    payload: dict[str, Any]
     status: str
+    llm_provider: str
+    llm_model: Optional[str]
+    repo_name: Optional[str]
+    repo_visibility: Optional[str]
+    repo_full_name: Optional[str]
+    repo_url: Optional[str]
+    pages_url: Optional[str]
+    commit_sha: Optional[str]
+    error_code: Optional[str]
+    error_message: Optional[str]
     created_at: datetime
     updated_at: datetime
-    payload: Dict[str, Any]
-    repo_url: Optional[str] = None
-    commit_sha: Optional[str] = None
-    pages_url: Optional[str] = None
-    error: Optional[str] = None
-    evaluation_status: Optional[str] = None
+    started_at: Optional[datetime]
+    completed_at: Optional[datetime]
 
 
 def iso_now() -> str:

@@ -4,8 +4,9 @@ from flask import Flask
 from dotenv import load_dotenv
 
 from .config import Settings
-from .jobqueue import create_queue
+from .jobqueue import create_queue, create_redis
 from .logger import configure_logging
+from .services.session_store import SessionStore
 from .storage import TaskRepository
 
 
@@ -17,14 +18,22 @@ def create_app() -> Flask:
 
     configure_logging(settings.log_file)
 
-    app = Flask(__name__)
+    app = Flask(
+        __name__,
+        static_folder=settings.frontend_dist,
+        static_url_path="",
+    )
     app.config["settings"] = settings
+
+    redis = create_redis(settings.redis_url)
+    app.config["redis"] = redis
     app.config["repository"] = TaskRepository(settings.database_path)
     app.config["queue"] = create_queue(
-        settings.redis_url, default_timeout=settings.request_timeout_seconds * 4
+        redis, default_timeout=settings.request_timeout_seconds * 6
     )
+    app.config["session_store"] = SessionStore(redis, settings)
 
-    from .routes import register_routes  # Local import to avoid circular dependency
+    from .routes import register_routes
 
     register_routes(app)
     return app

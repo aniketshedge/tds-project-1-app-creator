@@ -1,101 +1,402 @@
 from __future__ import annotations
 
-from __future__ import annotations
-
+import hashlib
+import json
 import logging
+from pathlib import Path
 from uuid import uuid4
 
-from flask import Flask, jsonify, request, current_app
+from flask import Flask, Response, current_app, jsonify, redirect, request, send_from_directory
 from pydantic import ValidationError
 
-from .models import TaskRecord, TaskRequest
+from .config import Settings
+from .models import JobCreatePayload, LLMIntegrationRequest
+from .services.github_oauth import build_auth_url, exchange_code_for_token, fetch_user_profile
+from .services.session_store import SessionStore
 from .storage import TaskRepository
 
 logger = logging.getLogger(__name__)
 
 
 def register_routes(app: Flask) -> None:
-    """Attach HTTP routes to the Flask app."""
-
     @app.after_request
-    def add_cors_headers(response):
-        response.headers.setdefault("Access-Control-Allow-Origin", "*")
-        response.headers.setdefault("Access-Control-Allow-Headers", "Content-Type, Authorization")
+    def add_cors_headers(response: Response) -> Response:
+        settings: Settings = current_app.config["settings"]
+        response.headers.setdefault("Access-Control-Allow-Origin", settings.cors_allow_origin)
+        response.headers.setdefault("Access-Control-Allow-Headers", "Content-Type")
         response.headers.setdefault("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         return response
 
-    @app.route("/tasks", methods=["OPTIONS"])
-    def options_tasks():
+    @app.route("/api/<path:_path>", methods=["OPTIONS"])
+    def api_options(_path: str):
         return "", 204
 
-    @app.get("/health")
+    @app.get("/api/health")
     def healthcheck() -> tuple[dict[str, str], int]:
         return {"status": "ok"}, 200
 
-    @app.post("/tasks")
-    def submit_task() -> tuple[dict[str, object], int]:
-        settings = current_app.config["settings"]
+    @app.get("/api/session")
+    def get_session() -> Response:
+        session_id, is_new = _get_or_create_session()
+        settings: Settings = current_app.config["settings"]
+        response = jsonify(
+            {
+                "session_id": session_id,
+                "expires_in_seconds": settings.session_ttl_seconds,
+            }
+        )
+        if is_new:
+            _set_session_cookie(response, session_id, settings)
+        return response
+
+    @app.post("/api/session/reset")
+    def reset_session() -> Response:
+        settings: Settings = current_app.config["settings"]
+        store: SessionStore = current_app.config["session_store"]
+
+        old = request.cookies.get(settings.session_cookie_name)
+        session_id = store.reset_session(old)
+
+        response = jsonify(
+            {
+                "session_id": session_id,
+                "expires_in_seconds": settings.session_ttl_seconds,
+            }
+        )
+        _set_session_cookie(response, session_id, settings)
+        return response
+
+    @app.get("/api/integrations")
+    def get_integrations() -> Response:
+        session_id, is_new = _get_or_create_session()
+        store: SessionStore = current_app.config["session_store"]
+
+        response = jsonify(store.integration_state(session_id))
+        if is_new:
+            _set_session_cookie(response, session_id, current_app.config["settings"])
+        return response
+
+    @app.post("/api/integrations/llm")
+    def configure_llm() -> Response:
+        session_id, is_new = _get_or_create_session()
+        store: SessionStore = current_app.config["session_store"]
+        settings: Settings = current_app.config["settings"]
+
+        payload = request.get_json(silent=True) or {}
+        try:
+            model = LLMIntegrationRequest.model_validate(payload)
+        except ValidationError as exc:
+            return jsonify({"error": "validation_error", "details": exc.errors()}), 400
+
+        llm_model = model.model or settings.perplexity_default_model
+        store.store_llm_credentials(
+            session_id=session_id,
+            provider=model.provider,
+            api_key=model.api_key,
+            model=llm_model,
+        )
+
+        response = jsonify(store.integration_state(session_id))
+        if is_new:
+            _set_session_cookie(response, session_id, settings)
+        return response
+
+    @app.get("/api/auth/github/start")
+    def github_oauth_start() -> Response:
+        session_id, is_new = _get_or_create_session()
+        settings: Settings = current_app.config["settings"]
+        store: SessionStore = current_app.config["session_store"]
+
+        state = uuid4().hex
+        store.store_oauth_state(session_id, state)
+        auth_url = build_auth_url(
+            client_id=settings.github_oauth_client_id,
+            redirect_uri=settings.github_oauth_redirect_uri,
+            scope=settings.github_oauth_scope,
+            state=state,
+        )
+
+        response = jsonify({"url": auth_url})
+        if is_new:
+            _set_session_cookie(response, session_id, settings)
+        return response
+
+    @app.get("/api/auth/github/callback")
+    def github_oauth_callback() -> Response:
+        settings: Settings = current_app.config["settings"]
+        store: SessionStore = current_app.config["session_store"]
+        session_id = request.cookies.get(settings.session_cookie_name)
+
+        if not session_id:
+            return redirect(f"{settings.frontend_callback_path}?github=error&reason=no_session")
+
+        expected_state = store.consume_oauth_state(session_id)
+        received_state = request.args.get("state")
+        code = request.args.get("code")
+
+        if not expected_state or not received_state or expected_state != received_state:
+            return redirect(f"{settings.frontend_callback_path}?github=error&reason=invalid_state")
+        if not code:
+            return redirect(f"{settings.frontend_callback_path}?github=error&reason=missing_code")
+
+        try:
+            access_token = exchange_code_for_token(
+                client_id=settings.github_oauth_client_id,
+                client_secret=settings.github_oauth_client_secret,
+                code=code,
+                redirect_uri=settings.github_oauth_redirect_uri,
+                timeout=settings.request_timeout_seconds,
+            )
+            profile = fetch_user_profile(access_token, timeout=settings.request_timeout_seconds)
+            store.store_github_credentials(
+                session_id=session_id,
+                access_token=access_token,
+                username=profile["username"],
+            )
+        except Exception:
+            logger.exception("GitHub OAuth callback failed")
+            return redirect(f"{settings.frontend_callback_path}?github=error&reason=exchange_failed")
+
+        return redirect(f"{settings.frontend_callback_path}?github=connected")
+
+    @app.post("/api/auth/github/disconnect")
+    def github_oauth_disconnect() -> Response:
+        session_id, is_new = _get_or_create_session()
+        settings: Settings = current_app.config["settings"]
+        store: SessionStore = current_app.config["session_store"]
+        store.clear_github_credentials(session_id)
+
+        response = jsonify(store.integration_state(session_id))
+        if is_new:
+            _set_session_cookie(response, session_id, settings)
+        return response
+
+    @app.post("/api/jobs")
+    def submit_job() -> Response:
+        session_id, is_new = _get_or_create_session()
+        settings: Settings = current_app.config["settings"]
         repository: TaskRepository = current_app.config["repository"]
         queue = current_app.config["queue"]
+        store: SessionStore = current_app.config["session_store"]
 
         try:
-            payload = request.get_json(force=True)
-        except Exception:
-            logger.exception("Failed to parse JSON request body")
-            return {"error": "bad_request", "message": "Invalid JSON payload"}, 400
-
-        logger.info("Incoming task request: %s", _redact_secret(payload))
-
-        try:
-            task_request = TaskRequest.model_validate(payload)
+            payload_dict, uploaded_files = _extract_job_payload_and_files()
+            payload = JobCreatePayload.model_validate(payload_dict)
+        except ValueError as exc:
+            return jsonify({"error": "bad_request", "message": str(exc)}), 400
         except ValidationError as exc:
-            logger.warning("Task validation failed: %s", exc)
-            return {"error": "validation_error", "details": exc.errors()}, 400
+            return jsonify({"error": "validation_error", "details": exc.errors()}), 400
 
-        if task_request.secret != settings.accepted_secret:
-            logger.warning("Rejected task with invalid secret for task_id=%s", task_request.task)
-            return {"error": "invalid_secret"}, 403
+        llm = store.get_llm_credentials(session_id)
+        github = store.get_github_credentials(session_id)
+        if not llm or not github:
+            return (
+                jsonify(
+                    {
+                        "error": "integrations_required",
+                        "message": "Configure both GitHub OAuth and LLM provider before creating a job",
+                    }
+                ),
+                400,
+            )
 
-        job_id = str(uuid4())
-        repository.record_task(job_id, task_request)
+        job_id = uuid4().hex
+        repository.create_job(job_id, session_id, payload, llm["provider"], llm.get("model"))
+        repository.append_event(job_id, "info", "Job queued")
+
+        attachment_dir = Path(settings.attachment_root) / job_id
+        attachment_dir.mkdir(parents=True, exist_ok=True)
+
+        for uploaded in uploaded_files:
+            safe_name = Path(uploaded["name"]).name
+            if not safe_name:
+                continue
+            data = uploaded["data"]
+            if len(data) > settings.attachment_max_bytes:
+                return (
+                    jsonify(
+                        {
+                            "error": "attachment_too_large",
+                            "message": f"Attachment {safe_name} exceeds {settings.attachment_max_bytes} bytes",
+                        }
+                    ),
+                    400,
+                )
+
+            digest = hashlib.sha256(data).hexdigest()
+            (attachment_dir / safe_name).write_bytes(data)
+            repository.add_attachment(
+                job_id=job_id,
+                file_name=safe_name,
+                media_type=uploaded.get("media_type"),
+                size_bytes=len(data),
+                sha256=digest,
+            )
+
+        store.snapshot_job_secrets(job_id, session_id)
         queue.enqueue("app.workflows.runner.process_job", job_id)
 
-        response = {"job_id": job_id, "status": "queued"}
-        logger.info(
-            "Queued job %s for task_id=%s round=%s", job_id, task_request.task, task_request.round
-        )
-        return response, 200
+        response = jsonify({"job_id": job_id, "status": "queued"})
+        if is_new:
+            _set_session_cookie(response, session_id, settings)
+        return response
 
-    @app.get("/tasks/<job_id>")
-    def get_task(job_id: str) -> tuple[dict[str, object], int]:
+    @app.get("/api/jobs")
+    def list_jobs() -> Response:
+        session_id, is_new = _get_or_create_session()
         repository: TaskRepository = current_app.config["repository"]
-        record = repository.fetch_task(job_id)
-        if not record:
-            return {"error": "not_found"}, 404
-        return _serialize_record(record), 200
+        settings: Settings = current_app.config["settings"]
+
+        jobs = repository.list_jobs_for_session(session_id)
+        response = jsonify({"jobs": [_serialize_job(job) for job in jobs]})
+        if is_new:
+            _set_session_cookie(response, session_id, settings)
+        return response
+
+    @app.get("/api/jobs/<job_id>")
+    def get_job(job_id: str) -> Response:
+        session_id, is_new = _get_or_create_session()
+        repository: TaskRepository = current_app.config["repository"]
+        settings: Settings = current_app.config["settings"]
+
+        job = repository.fetch_job(job_id)
+        if not job or job.session_id != session_id:
+            return jsonify({"error": "not_found"}), 404
+
+        response = jsonify(_serialize_job(job))
+        if is_new:
+            _set_session_cookie(response, session_id, settings)
+        return response
+
+    @app.get("/api/jobs/<job_id>/events")
+    def get_job_events(job_id: str) -> Response:
+        session_id, is_new = _get_or_create_session()
+        repository: TaskRepository = current_app.config["repository"]
+        settings: Settings = current_app.config["settings"]
+
+        job = repository.fetch_job(job_id)
+        if not job or job.session_id != session_id:
+            return jsonify({"error": "not_found"}), 404
+
+        after = request.args.get("after", default="0")
+        try:
+            after_id = int(after)
+        except ValueError:
+            return jsonify({"error": "bad_request", "message": "Invalid 'after' parameter"}), 400
+
+        events = repository.list_events(job_id, after_id=after_id)
+        response = jsonify(
+            {
+                "events": [_serialize_event(event) for event in events],
+                "next_after": events[-1].id if events else after_id,
+            }
+        )
+        if is_new:
+            _set_session_cookie(response, session_id, settings)
+        return response
+
+    @app.get("/")
+    def serve_index() -> Response:
+        static_root = current_app.static_folder
+        if not static_root or not Path(static_root, "index.html").exists():
+            return jsonify({"message": "Frontend is not built yet."}), 200
+        return send_from_directory(static_root, "index.html")
+
+    @app.get("/<path:path>")
+    def serve_spa(path: str) -> Response:
+        if path.startswith("api/"):
+            return jsonify({"error": "not_found"}), 404
+
+        static_root = current_app.static_folder
+        if not static_root:
+            return jsonify({"message": "Frontend is not built yet."}), 200
+
+        candidate = Path(static_root, path)
+        if candidate.exists() and candidate.is_file():
+            return send_from_directory(static_root, path)
+
+        index_file = Path(static_root, "index.html")
+        if index_file.exists():
+            return send_from_directory(static_root, "index.html")
+        return jsonify({"message": "Frontend is not built yet."}), 200
 
 
-def _serialize_record(record: TaskRecord) -> dict[str, object]:
+def _extract_job_payload_and_files() -> tuple[dict, list[dict[str, object]]]:
+    content_type = request.content_type or ""
+
+    if "multipart/form-data" in content_type:
+        payload_raw = request.form.get("payload")
+        if not payload_raw:
+            raise ValueError("Missing 'payload' field in multipart form")
+        try:
+            payload = json.loads(payload_raw)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Invalid payload JSON: {exc}") from exc
+
+        files: list[dict[str, object]] = []
+        for file_storage in request.files.getlist("files"):
+            files.append(
+                {
+                    "name": file_storage.filename or "attachment.bin",
+                    "media_type": file_storage.mimetype,
+                    "data": file_storage.read(),
+                }
+            )
+        return payload, files
+
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        raise ValueError("Expected JSON object or multipart form data")
+    return payload, []
+
+
+def _get_or_create_session() -> tuple[str, bool]:
+    settings: Settings = current_app.config["settings"]
+    store: SessionStore = current_app.config["session_store"]
+
+    session_id = request.cookies.get(settings.session_cookie_name)
+    return store.ensure_session(session_id)
+
+
+def _set_session_cookie(response: Response, session_id: str, settings: Settings) -> None:
+    response.set_cookie(
+        settings.session_cookie_name,
+        session_id,
+        max_age=settings.session_ttl_seconds,
+        httponly=True,
+        secure=settings.session_cookie_secure,
+        samesite="Lax",
+        path="/",
+    )
+
+
+def _serialize_job(job) -> dict[str, object]:
     return {
-        "job_id": record.job_id,
-        "task": record.task,
-        "round": record.round,
-        "status": record.status,
-        "repo_url": record.repo_url,
-        "commit_sha": record.commit_sha,
-        "pages_url": record.pages_url,
-        "error": record.error,
-        "evaluation_status": record.evaluation_status,
-        "created_at": record.created_at.isoformat(),
-        "updated_at": record.updated_at.isoformat(),
-        "payload": record.payload,
+        "job_id": job.id,
+        "status": job.status,
+        "title": job.title,
+        "brief": job.brief,
+        "llm_provider": job.llm_provider,
+        "llm_model": job.llm_model,
+        "repo_name": job.repo_name,
+        "repo_visibility": job.repo_visibility,
+        "repo_full_name": job.repo_full_name,
+        "repo_url": job.repo_url,
+        "pages_url": job.pages_url,
+        "commit_sha": job.commit_sha,
+        "error_code": job.error_code,
+        "error_message": job.error_message,
+        "created_at": job.created_at.isoformat(),
+        "updated_at": job.updated_at.isoformat(),
+        "started_at": job.started_at.isoformat() if job.started_at else None,
+        "completed_at": job.completed_at.isoformat() if job.completed_at else None,
     }
 
 
-def _redact_secret(payload: dict[str, object]) -> dict[str, object]:
-    if not isinstance(payload, dict):
-        return payload
-    redacted = dict(payload)
-    if "secret" in redacted:
-        redacted["secret"] = "***"
-    return redacted
+def _serialize_event(event) -> dict[str, object]:
+    return {
+        "id": event.id,
+        "level": event.level,
+        "message": event.message,
+        "created_at": event.created_at.isoformat(),
+    }

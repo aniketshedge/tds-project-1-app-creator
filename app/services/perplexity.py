@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import List
 
 import requests
 
-from ..models import Attachment, Manifest, TaskRequest
+from ..models import Manifest, PromptAttachment
 
 logger = logging.getLogger(__name__)
 
@@ -20,8 +19,8 @@ class PerplexityClient:
         self.timeout = timeout
         self.max_retries = max_retries
 
-    def generate_manifest(self, request: TaskRequest, attachments: List[Attachment]) -> Manifest:
-        prompt = self._build_prompt(request, attachments)
+    def generate_manifest(self, brief: str, attachments: list[PromptAttachment]) -> Manifest:
+        prompt = self._build_prompt(brief, attachments)
 
         for attempt in range(1, self.max_retries + 1):
             logger.info("Requesting manifest from Perplexity (attempt %d)", attempt)
@@ -30,15 +29,12 @@ class PerplexityClient:
                 "messages": [
                     {
                         "role": "system",
-                        "content": "You are an autonomous senior software engineer focused on static site generation. Always respond with strict JSON that matches the requested schema.",
+                        "content": "You generate production-ready static web apps. Always respond with strict JSON that matches the requested schema.",
                     },
                     {"role": "user", "content": prompt},
                 ],
-                "max_tokens": 2000,
+                "max_tokens": 3200,
             }
-
-            if "reasoning" in self.model:
-                payload["reasoning"] = {"enable": True}
 
             response = requests.post(
                 API_URL,
@@ -70,30 +66,19 @@ class PerplexityClient:
 
         raise RuntimeError("Perplexity API failed to produce a valid manifest")
 
-    def _build_prompt(self, request: TaskRequest, attachments: List[Attachment]) -> str:
-        attachment_sections = []
+    def _build_prompt(self, brief: str, attachments: list[PromptAttachment]) -> str:
+        attachment_sections: list[str] = []
         for attachment in attachments:
-            try:
-                data = attachment.decode()
-            except ValueError:
-                data = b""
-            preview = data[:500].decode("utf-8", errors="replace")
+            preview = attachment.data[:500].decode("utf-8", errors="replace")
             attachment_sections.append(
-                f"- {attachment.name} ({attachment.media_type()}, {len(data)} bytes)\n```\n{preview}\n```"
+                f"- {attachment.file_name} ({attachment.media_type}, {len(attachment.data)} bytes)\n```\n{preview}\n```"
             )
 
         attachment_text = "\n".join(attachment_sections) if attachment_sections else "None provided."
-        checks_text = "\n".join(f"- {check}" for check in request.checks) or "- None specified."
 
-        prompt = f"""
-Project Brief:
-{request.brief}
-
-Evaluation Checks:
-{checks_text}
-
-Round: {request.round}
-Task ID: {request.task}
+        return f"""
+Build a static frontend project from this brief:
+{brief}
 
 Attachments:
 {attachment_text}
@@ -112,14 +97,8 @@ Requirements:
   "readme": "optional README.md content",
   "commands": ["optional shell command to run before deployment"]
 }}
-- Preserve placeholder tokens exactly as provided (e.g., `${{seed}}`, `${{result}}`, `${{nonce}}`) without substituting example values. Treat them as template variables (Example: `document.title = \`Sales Summary ${{seed}}\`` is correct; `document.title = 'Sales Summary seed'` is incorrect.).
-- Exclude evaluator checks from README or other user-facing docs; instead provide a professional README with sections for Overview, Getting Started, Usage, and task-specific notes.
-- Write code defensively when consuming attachments (e.g., trim blank rows, guard against malformed data) to prevent runtime errors.
-- When parsing CSV data, split the string into rows before splitting columns (e.g., `const header = rows[0].split(',')`); never call `.split` on an array.
-- Do not use Node.js or other server-only APIs (e.g., `require`, `module.exports`, `process`, `fs`)—the output must run entirely in the browser.
-- All HTML assets must be self-contained (no server runtime for the deployed site).
-- Include an MIT LICENSE file if not already provided.
-- Ensure the site works when hosted on GitHub Pages (root path, relative assets).
-- Keep the response under 120k characters.
-"""
-        return prompt
+- Output must run as a static site on GitHub Pages.
+- Use browser-safe JavaScript only. Do not use server runtime APIs (`require`, `module.exports`, `process`, `fs`).
+- Keep code and README concise, clear, and maintainable.
+- Include a LICENSE file only if one is not already present.
+""".strip()

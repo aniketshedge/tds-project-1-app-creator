@@ -1,0 +1,48 @@
+services:
+  web:
+    build: .
+    container_name: app-creator-web
+    ports:
+      - "8000:8000"
+    depends_on:
+      - redis
+    env_file:
+      - .env
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      DATABASE_PATH: /app/data/tasks.db
+      ATTACHMENT_ROOT: /app/data/attachments
+      WORKSPACE_ROOT: /tmp/task-runner
+      FRONTEND_DIST: /app/frontend/dist
+      SESSION_COOKIE_SECURE: "false"
+    volumes:
+      - app_data:/app/data
+    restart: unless-stopped
+
+  worker:
+    build: .
+    container_name: app-creator-worker
+    command: ["python", "worker.py"]
+    depends_on:
+      - redis
+    env_file:
+      - .env
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      DATABASE_PATH: /app/data/tasks.db
+      ATTACHMENT_ROOT: /app/data/attachments
+      WORKSPACE_ROOT: /tmp/task-runner
+      FRONTEND_DIST: /app/frontend/dist
+      SESSION_COOKIE_SECURE: "false"
+    volumes:
+      - app_data:/app/data
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: app-creator-redis
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    restart: unless-stopped
+
+volumes:
+  app_data:
