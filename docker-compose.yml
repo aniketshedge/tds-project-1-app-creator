@@ -12,6 +12,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       DATABASE_PATH: /app/data/tasks.db
       ATTACHMENT_ROOT: /app/data/attachments
+      PACKAGE_ROOT: /app/data/packages
       WORKSPACE_ROOT: /tmp/task-runner
       FRONTEND_DIST: /app/frontend/dist
       SESSION_COOKIE_SECURE: "false"
@@ -31,6 +32,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       DATABASE_PATH: /app/data/tasks.db
       ATTACHMENT_ROOT: /app/data/attachments
+      PACKAGE_ROOT: /app/data/packages
       WORKSPACE_ROOT: /tmp/task-runner
       FRONTEND_DIST: /app/frontend/dist
       SESSION_COOKIE_SECURE: "false"

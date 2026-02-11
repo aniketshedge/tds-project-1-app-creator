@@ -7,7 +7,16 @@ from pathlib import Path
 from urllib.parse import urlencode
 from uuid import uuid4
 
-from flask import Flask, Response, current_app, jsonify, redirect, request, send_from_directory
+from flask import (
+    Flask,
+    Response,
+    current_app,
+    jsonify,
+    redirect,
+    request,
+    send_file,
+    send_from_directory,
+)
 from pydantic import ValidationError
 
 from .config import Settings
@@ -204,12 +213,22 @@ def register_routes(app: Flask) -> None:
 
         llm = store.get_llm_credentials(session_id)
         github = store.get_github_credentials(session_id)
-        if not llm or not github:
+        if not llm:
             return (
                 jsonify(
                     {
                         "error": "integrations_required",
-                        "message": "Configure both GitHub App and LLM provider before creating a job",
+                        "message": "Configure an LLM provider before creating a job",
+                    }
+                ),
+                400,
+            )
+        if payload.delivery_mode == "github" and not github:
+            return (
+                jsonify(
+                    {
+                        "error": "integrations_required",
+                        "message": "Connect GitHub App for GitHub delivery mode, or switch to ZIP download mode",
                     }
                 ),
                 400,
@@ -248,7 +267,11 @@ def register_routes(app: Flask) -> None:
                 sha256=digest,
             )
 
-        store.snapshot_job_secrets(job_id, session_id)
+        store.snapshot_job_secrets(
+            job_id,
+            session_id,
+            include_github=(payload.delivery_mode == "github"),
+        )
         queue.enqueue("app.workflows.runner.process_job", job_id)
 
         response = jsonify({"job_id": job_id, "status": "queued"})
@@ -305,6 +328,38 @@ def register_routes(app: Flask) -> None:
                 "events": [_serialize_event(event) for event in events],
                 "next_after": events[-1].id if events else after_id,
             }
+        )
+        if is_new:
+            _set_session_cookie(response, session_id, settings)
+        return response
+
+    @app.get("/api/jobs/<job_id>/download")
+    def download_job_artifact(job_id: str):
+        session_id, is_new = _get_or_create_session()
+        repository: TaskRepository = current_app.config["repository"]
+        settings: Settings = current_app.config["settings"]
+
+        job = repository.fetch_job(job_id)
+        if not job or job.session_id != session_id:
+            return jsonify({"error": "not_found"}), 404
+        if not job.artifact_path:
+            return jsonify({"error": "artifact_not_available"}), 404
+
+        artifact_path = Path(job.artifact_path).resolve()
+        package_root = Path(settings.package_root).resolve()
+        try:
+            artifact_path.relative_to(package_root)
+        except ValueError:
+            logger.warning("Blocked artifact download outside package root: %s", artifact_path)
+            return jsonify({"error": "invalid_artifact_path"}), 400
+        if not artifact_path.exists() or not artifact_path.is_file():
+            return jsonify({"error": "artifact_not_found"}), 404
+
+        response = send_file(
+            artifact_path,
+            as_attachment=True,
+            download_name=job.artifact_name or artifact_path.name,
+            mimetype="application/zip",
         )
         if is_new:
             _set_session_cookie(response, session_id, settings)
@@ -406,12 +461,15 @@ def _serialize_job(job) -> dict[str, object]:
         "brief": job.brief,
         "llm_provider": job.llm_provider,
         "llm_model": job.llm_model,
+        "delivery_mode": job.delivery_mode,
         "repo_name": job.repo_name,
         "repo_visibility": job.repo_visibility,
         "repo_full_name": job.repo_full_name,
         "repo_url": job.repo_url,
         "pages_url": job.pages_url,
         "commit_sha": job.commit_sha,
+        "artifact_name": job.artifact_name,
+        "download_url": f"/api/jobs/{job.id}/download" if job.artifact_path else None,
         "error_code": job.error_code,
         "error_message": job.error_message,
         "created_at": job.created_at.isoformat(),

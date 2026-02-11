@@ -29,12 +29,15 @@ class TaskRepository:
                     status TEXT NOT NULL,
                     llm_provider TEXT NOT NULL,
                     llm_model TEXT,
+                    delivery_mode TEXT NOT NULL DEFAULT 'github',
                     repo_name TEXT,
                     repo_visibility TEXT,
                     repo_full_name TEXT,
                     repo_url TEXT,
                     pages_url TEXT,
                     commit_sha TEXT,
+                    artifact_path TEXT,
+                    artifact_name TEXT,
                     error_code TEXT,
                     error_message TEXT,
                     created_at TEXT NOT NULL,
@@ -75,6 +78,9 @@ class TaskRepository:
                     ON job_events(job_id, id);
                 """
             )
+            self._ensure_column(conn, "jobs", "delivery_mode", "TEXT NOT NULL DEFAULT 'github'")
+            self._ensure_column(conn, "jobs", "artifact_path", "TEXT")
+            self._ensure_column(conn, "jobs", "artifact_name", "TEXT")
             conn.commit()
 
     @contextmanager
@@ -101,10 +107,10 @@ class TaskRepository:
                 """
                 INSERT INTO jobs (
                     id, session_id, title, brief, payload_json, status,
-                    llm_provider, llm_model, repo_name, repo_visibility,
+                    llm_provider, llm_model, delivery_mode, repo_name, repo_visibility,
                     created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     job_id,
@@ -115,8 +121,9 @@ class TaskRepository:
                     "queued",
                     llm_provider,
                     llm_model,
-                    payload.repo.name,
-                    payload.repo.visibility,
+                    payload.delivery_mode,
+                    payload.repo.name if payload.repo else None,
+                    payload.repo.visibility if payload.repo else None,
                     now,
                     now,
                 ),
@@ -161,6 +168,8 @@ class TaskRepository:
         repo_url: Optional[str] = None,
         pages_url: Optional[str] = None,
         commit_sha: Optional[str] = None,
+        artifact_path: Optional[str] = None,
+        artifact_name: Optional[str] = None,
         error_code: Optional[str] = None,
         error_message: Optional[str] = None,
         started_at: Optional[str] = None,
@@ -177,6 +186,10 @@ class TaskRepository:
             updates["pages_url"] = pages_url
         if commit_sha is not None:
             updates["commit_sha"] = commit_sha
+        if artifact_path is not None:
+            updates["artifact_path"] = artifact_path
+        if artifact_name is not None:
+            updates["artifact_name"] = artifact_name
         if error_code is not None:
             updates["error_code"] = error_code
         if error_message is not None:
@@ -246,12 +259,15 @@ class TaskRepository:
             status=row["status"],
             llm_provider=row["llm_provider"],
             llm_model=row["llm_model"],
+            delivery_mode=row["delivery_mode"] or "github",
             repo_name=row["repo_name"],
             repo_visibility=row["repo_visibility"],
             repo_full_name=row["repo_full_name"],
             repo_url=row["repo_url"],
             pages_url=row["pages_url"],
             commit_sha=row["commit_sha"],
+            artifact_path=row["artifact_path"],
+            artifact_name=row["artifact_name"],
             error_code=row["error_code"],
             error_message=row["error_message"],
             created_at=datetime.fromisoformat(row["created_at"]),
@@ -259,6 +275,15 @@ class TaskRepository:
             started_at=datetime.fromisoformat(row["started_at"]) if row["started_at"] else None,
             completed_at=datetime.fromisoformat(row["completed_at"]) if row["completed_at"] else None,
         )
+
+    def _ensure_column(
+        self, conn: sqlite3.Connection, table: str, column: str, declaration: str
+    ) -> None:
+        columns = conn.execute(f"PRAGMA table_info({table})").fetchall()
+        existing = {row["name"] for row in columns}
+        if column in existing:
+            return
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")
 
     def _row_to_attachment(self, row: sqlite3.Row) -> JobAttachmentRecord:
         return JobAttachmentRecord(

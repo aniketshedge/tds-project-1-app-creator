@@ -33,6 +33,7 @@ const llmForm = reactive({
 
 const jobForm = reactive({
   title: "",
+  deliveryMode: "github",
   repoName: "",
   visibility: "public",
   brief: "",
@@ -47,7 +48,15 @@ const pollHandle = ref(null);
 const ACTIVE_JOB_STATUSES = new Set(["queued", "in_progress", "deployed"]);
 const pagesLinkHoverTitle = "GitHub Pages can take a few minutes to become live after deployment.";
 
-const canCreateJob = computed(() => integrations.value.github.connected && integrations.value.llm.configured);
+const canCreateJob = computed(() => {
+  if (!integrations.value.llm.configured) {
+    return false;
+  }
+  if (jobForm.deliveryMode === "zip") {
+    return true;
+  }
+  return integrations.value.github.connected;
+});
 const hasSavedLlmConfig = computed(() => integrations.value.llm.configured);
 const selectedPagesUrl = computed(() => buildPagesUrl(selectedJob.value));
 const isSelectedPagesUrlEstimated = computed(
@@ -219,16 +228,19 @@ async function createJob() {
     const payload = {
       title: jobForm.title,
       brief: jobForm.brief,
-      repo: {
+      delivery_mode: jobForm.deliveryMode,
+    };
+    if (jobForm.deliveryMode === "github") {
+      payload.repo = {
         name: jobForm.repoName,
         visibility: jobForm.visibility,
-      },
-      deployment: {
+      };
+      payload.deployment = {
         enable_pages: jobForm.enablePages,
         branch: jobForm.branch,
         path: jobForm.deployPath,
-      },
-    };
+      };
+    }
 
     const formData = new FormData();
     formData.append("payload", JSON.stringify(payload));
@@ -380,6 +392,15 @@ watch(
   }
 );
 
+watch(
+  () => jobForm.deliveryMode,
+  (mode) => {
+    if (mode === "zip") {
+      jobForm.enablePages = false;
+    }
+  }
+);
+
 onMounted(async () => {
   const params = new URLSearchParams(window.location.search);
   if (params.get("github") === "connected") {
@@ -489,41 +510,54 @@ onBeforeUnmount(() => {
             <input v-model="jobForm.title" type="text" required />
           </label>
           <label>
-            GitHub Repository Name
-            <input v-model="jobForm.repoName" type="text" required />
-          </label>
-          <label>
-            Visibility
-            <select v-model="jobForm.visibility">
-              <option value="public">Public</option>
-              <option value="private">Private</option>
+            Delivery Mode
+            <select v-model="jobForm.deliveryMode">
+              <option value="github">Deploy to GitHub</option>
+              <option value="zip">Generate ZIP package</option>
             </select>
           </label>
 
-          <p v-if="jobForm.visibility === 'private'" class="private-pages-note">
-            Private repositories may not support GitHub Pages on your current plan. Pages is disabled.
-          </p>
+          <div v-if="jobForm.deliveryMode === 'github'" class="stack">
+            <label>
+              GitHub Repository Name
+              <input v-model="jobForm.repoName" type="text" required />
+            </label>
+            <label>
+              Visibility
+              <select v-model="jobForm.visibility">
+                <option value="public">Public</option>
+                <option value="private">Private</option>
+              </select>
+            </label>
+
+            <p v-if="jobForm.visibility === 'private'" class="private-pages-note">
+              Private repositories may not support GitHub Pages on your current plan. Pages is disabled.
+            </p>
+          </div>
+          <p v-else class="private-pages-note">This job will generate a ZIP package you can download directly.</p>
 
           <label>
             Brief
             <textarea v-model="jobForm.brief" rows="7" required></textarea>
           </label>
 
-          <div class="split">
-            <label>
-              Branch
-              <input v-model="jobForm.branch" type="text" />
-            </label>
-            <label>
-              Pages Path
-              <input v-model="jobForm.deployPath" type="text" />
-            </label>
-          </div>
+          <template v-if="jobForm.deliveryMode === 'github'">
+            <div class="split">
+              <label>
+                Branch
+                <input v-model="jobForm.branch" type="text" />
+              </label>
+              <label>
+                Pages Path
+                <input v-model="jobForm.deployPath" type="text" />
+              </label>
+            </div>
 
-          <label class="check-row">
-            <input v-model="jobForm.enablePages" type="checkbox" :disabled="jobForm.visibility === 'private'" />
-            Enable GitHub Pages after push
-          </label>
+            <label class="check-row">
+              <input v-model="jobForm.enablePages" type="checkbox" :disabled="jobForm.visibility === 'private'" />
+              Enable GitHub Pages after push
+            </label>
+          </template>
 
           <label>
             Attachments
@@ -581,6 +615,10 @@ onBeforeUnmount(() => {
             <span v-else>-</span>
           </p>
           <p><strong>Commit:</strong> <code>{{ selectedJob.commit_sha || "-" }}</code></p>
+          <p v-if="selectedJob.download_url">
+            <strong>Download:</strong>
+            <a :href="selectedJob.download_url">Download ZIP package</a>
+          </p>
           <p v-if="selectedJob.error_message" class="error">{{ selectedJob.error_message }}</p>
 
           <h4>Events</h4>

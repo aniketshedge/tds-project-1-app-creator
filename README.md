@@ -42,6 +42,7 @@ Sensitive data policy:
 - `GET /api/jobs`
 - `GET /api/jobs/<job_id>`
 - `GET /api/jobs/<job_id>/events?after=<id>`
+- `GET /api/jobs/<job_id>/download` (for ZIP delivery jobs)
 
 `POST /api/jobs` expects `multipart/form-data`:
 - `payload`: JSON string
@@ -53,6 +54,7 @@ Payload schema:
 {
   "title": "my-app",
   "brief": "Build a static app that ...",
+  "delivery_mode": "github",
   "repo": {
     "name": "my-app",
     "visibility": "public"
@@ -64,6 +66,10 @@ Payload schema:
   }
 }
 ```
+
+`delivery_mode` options:
+- `github`: deploy to connected GitHub account (requires GitHub integration)
+- `zip`: generate downloadable ZIP package (GitHub not required)
 
 ## Local Development
 

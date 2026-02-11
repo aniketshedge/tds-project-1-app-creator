@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     database_path: str = "./data/tasks.db"
     workspace_root: str = "/tmp/task-runner"
     attachment_root: str = "./data/attachments"
+    package_root: str = "./data/packages"
     frontend_dist: str = "./frontend/dist"
 
     # Logging
@@ -52,16 +53,19 @@ class Settings(BaseSettings):
         db_path = Path(self.database_path).expanduser().resolve()
         workspace = Path(self.workspace_root).expanduser().resolve()
         attach_root = Path(self.attachment_root).expanduser().resolve()
+        package_root = Path(self.package_root).expanduser().resolve()
         log_path = Path(self.log_file).expanduser().resolve()
         frontend_dist = Path(self.frontend_dist).expanduser().resolve()
 
         self.database_path = str(db_path)
         self.workspace_root = str(workspace)
         self.attachment_root = str(attach_root)
+        self.package_root = str(package_root)
         self.log_file = str(log_path)
         self.frontend_dist = str(frontend_dist)
 
         workspace.mkdir(parents=True, exist_ok=True)
         attach_root.mkdir(parents=True, exist_ok=True)
+        package_root.mkdir(parents=True, exist_ok=True)
         Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
         log_path.parent.mkdir(parents=True, exist_ok=True)
