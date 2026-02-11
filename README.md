@@ -80,7 +80,7 @@ Set GitHub App values in `.env`:
 - `GITHUB_APP_CLIENT_ID`
 - `GITHUB_APP_CLIENT_SECRET`
 - `GITHUB_APP_CALLBACK_URL`
-- optional: `GITHUB_APP_SLUG` (used to expose an install URL in API response)
+- optional: `GITHUB_APP_SLUG` (enables the frontend "Install App" button)
 
 Run Redis locally, then:
 

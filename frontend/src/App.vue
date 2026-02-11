@@ -16,6 +16,7 @@ const busy = reactive({
   savingLlm: false,
   creatingJob: false,
   resettingSession: false,
+  githubAuthFlow: false,
 });
 const flash = ref("");
 
@@ -81,12 +82,34 @@ async function refreshIntegrations() {
 }
 
 async function startGithubAuth() {
+  busy.githubAuthFlow = true;
   flash.value = "";
   try {
     const data = await api("/api/auth/github/start");
     window.location.href = data.url;
   } catch (error) {
     flash.value = `GitHub App authorization start failed: ${error.message}`;
+  } finally {
+    busy.githubAuthFlow = false;
+  }
+}
+
+async function installGithubApp() {
+  busy.githubAuthFlow = true;
+  flash.value = "";
+  try {
+    const data = await api("/api/auth/github/start");
+    if (!data.install_url) {
+      flash.value =
+        "Install URL is not available. Set GITHUB_APP_SLUG in server environment and restart the app.";
+      return;
+    }
+    window.open(data.install_url, "_blank", "noopener,noreferrer");
+    flash.value = "GitHub App installation page opened. Install it, then click Connect GitHub.";
+  } catch (error) {
+    flash.value = `GitHub App install launch failed: ${error.message}`;
+  } finally {
+    busy.githubAuthFlow = false;
   }
 }
 
@@ -300,9 +323,12 @@ onBeforeUnmount(() => {
             <p v-else>Not connected</p>
           </div>
           <div class="row-actions">
-            <button v-if="!integrations.github.connected" @click="startGithubAuth">
-              Connect GitHub
-            </button>
+            <template v-if="!integrations.github.connected">
+              <button class="ghost" :disabled="busy.githubAuthFlow" @click="installGithubApp">
+                Install App
+              </button>
+              <button :disabled="busy.githubAuthFlow" @click="startGithubAuth">Connect GitHub</button>
+            </template>
             <button v-else class="ghost" @click="disconnectGithub">Disconnect</button>
           </div>
         </div>
