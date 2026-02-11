@@ -184,6 +184,17 @@ class GitHubClient:
             response = self.session.put(url, json=payload, timeout=self.timeout)
 
         if response.status_code not in (200, 201, 202, 204):
+            if response.status_code == 422:
+                try:
+                    message = response.json().get("message", "")
+                except ValueError:
+                    message = response.text
+                if "does not support GitHub Pages for this repository" in message:
+                    raise RuntimeError(
+                        "GitHub Pages is not available for this repository under your current plan. "
+                        "Use a public repository, disable Pages for this job, or upgrade plan "
+                        "for private-repo Pages support."
+                    )
             raise RuntimeError(f"Failed to configure GitHub Pages: {response.text}")
 
         pages_url = f"https://{self.username}.github.io/{repo_full_name.split('/')[-1]}/"
