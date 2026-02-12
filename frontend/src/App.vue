@@ -47,6 +47,7 @@ const deployForm = reactive({
 
 const attachmentFiles = ref([]);
 const pollHandle = ref(null);
+const UI_DRAFT_KEY = "app-creator-ui-draft-v1";
 
 const panelState = reactive({
   step1: true,
@@ -63,11 +64,20 @@ const buildModal = reactive({
   error: "",
   lines: [],
 });
+const deployModal = reactive({
+  visible: false,
+  jobId: "",
+  failed: false,
+  error: "",
+  lines: [],
+});
 
 const buildInFlightStatuses = new Set(["queued", "in_progress", "deploying"]);
 const pagesLinkHoverTitle = "GitHub Pages can take a few minutes to become live after deployment.";
+const isAnyProgressModalVisible = computed(() => buildModal.visible || deployModal.visible);
+const hasCompletedDeployment = computed(() => Boolean(selectedJob.value?.repo_url || selectedJob.value?.commit_sha));
 
-const canCreateJob = computed(() => integrations.value.llm.configured && !buildModal.visible);
+const canCreateJob = computed(() => integrations.value.llm.configured && !isAnyProgressModalVisible.value);
 const hasSavedLlmConfig = computed(() => integrations.value.llm.configured);
 const canDownloadSelectedJob = computed(() => Boolean(selectedJob.value?.download_url));
 const canDeploySelectedJob = computed(() => {
@@ -83,7 +93,10 @@ const canDeploySelectedJob = computed(() => {
   if (buildInFlightStatuses.has(selectedJob.value.status)) {
     return false;
   }
-  return !busy.deployingJob && !buildModal.visible;
+  if (hasCompletedDeployment.value) {
+    return false;
+  }
+  return !busy.deployingJob && !isAnyProgressModalVisible.value;
 });
 const selectedPagesUrl = computed(() => buildPagesUrl(selectedJob.value));
 const isSelectedPagesUrlEstimated = computed(
@@ -122,6 +135,95 @@ function applyResponsivePanelDefaults(force = false) {
 
 function handleResize() {
   applyResponsivePanelDefaults(false);
+}
+
+function saveUiDraft() {
+  try {
+    const draft = {
+      selectedJobId: selectedJobId.value,
+      deployToGithub: deployToGithub.value,
+      jobForm: {
+        title: jobForm.title,
+        brief: jobForm.brief,
+      },
+      deployForm: {
+        repoName: deployForm.repoName,
+        visibility: deployForm.visibility,
+        enablePages: deployForm.enablePages,
+        branch: deployForm.branch,
+        deployPath: deployForm.deployPath,
+      },
+      panelState: {
+        step1: panelState.step1,
+        step2: panelState.step2,
+        step3: panelState.step3,
+        history: panelState.history,
+      },
+      llmConfigExpanded: llmConfigExpanded.value,
+    };
+    window.sessionStorage.setItem(UI_DRAFT_KEY, JSON.stringify(draft));
+  } catch {
+    // ignore storage errors
+  }
+}
+
+function clearUiDraft() {
+  try {
+    window.sessionStorage.removeItem(UI_DRAFT_KEY);
+  } catch {
+    // ignore storage errors
+  }
+}
+
+function restoreUiDraft() {
+  try {
+    const raw = window.sessionStorage.getItem(UI_DRAFT_KEY);
+    if (!raw) {
+      return;
+    }
+    const draft = JSON.parse(raw);
+
+    if (typeof draft.selectedJobId === "string") {
+      selectedJobId.value = draft.selectedJobId;
+    }
+    if (typeof draft.deployToGithub === "boolean") {
+      deployToGithub.value = draft.deployToGithub;
+    }
+
+    if (draft.jobForm && typeof draft.jobForm === "object") {
+      jobForm.title = typeof draft.jobForm.title === "string" ? draft.jobForm.title : jobForm.title;
+      jobForm.brief = typeof draft.jobForm.brief === "string" ? draft.jobForm.brief : jobForm.brief;
+    }
+
+    if (draft.deployForm && typeof draft.deployForm === "object") {
+      deployForm.repoName =
+        typeof draft.deployForm.repoName === "string" ? draft.deployForm.repoName : deployForm.repoName;
+      deployForm.visibility =
+        draft.deployForm.visibility === "private" || draft.deployForm.visibility === "public"
+          ? draft.deployForm.visibility
+          : deployForm.visibility;
+      deployForm.enablePages =
+        typeof draft.deployForm.enablePages === "boolean"
+          ? draft.deployForm.enablePages
+          : deployForm.enablePages;
+      deployForm.branch = typeof draft.deployForm.branch === "string" ? draft.deployForm.branch : deployForm.branch;
+      deployForm.deployPath =
+        typeof draft.deployForm.deployPath === "string" ? draft.deployForm.deployPath : deployForm.deployPath;
+    }
+
+    if (draft.panelState && typeof draft.panelState === "object") {
+      panelState.step1 = Boolean(draft.panelState.step1);
+      panelState.step2 = Boolean(draft.panelState.step2);
+      panelState.step3 = Boolean(draft.panelState.step3);
+      panelState.history = Boolean(draft.panelState.history);
+    }
+
+    if (typeof draft.llmConfigExpanded === "boolean") {
+      llmConfigExpanded.value = draft.llmConfigExpanded;
+    }
+  } catch {
+    // ignore invalid storage payload
+  }
 }
 
 async function api(path, options = {}) {
@@ -207,6 +309,22 @@ function closeBuildModal() {
   buildModal.lines = [];
 }
 
+function openDeployModal(jobId) {
+  deployModal.visible = true;
+  deployModal.jobId = jobId;
+  deployModal.failed = false;
+  deployModal.error = "";
+  deployModal.lines = ["> Deployment accepted. Waiting for worker..."];
+}
+
+function closeDeployModal() {
+  deployModal.visible = false;
+  deployModal.jobId = "";
+  deployModal.failed = false;
+  deployModal.error = "";
+  deployModal.lines = [];
+}
+
 function appendBuildModalEvents(newEvents) {
   if (!buildModal.visible || !selectedJob.value || buildModal.jobId !== selectedJob.value.job_id) {
     return;
@@ -218,6 +336,20 @@ function appendBuildModalEvents(newEvents) {
 
   if (buildModal.lines.length > 80) {
     buildModal.lines = buildModal.lines.slice(-80);
+  }
+}
+
+function appendDeployModalEvents(newEvents) {
+  if (!deployModal.visible || !selectedJob.value || deployModal.jobId !== selectedJob.value.job_id) {
+    return;
+  }
+
+  for (const event of newEvents) {
+    deployModal.lines.push(`> ${event.message}`);
+  }
+
+  if (deployModal.lines.length > 80) {
+    deployModal.lines = deployModal.lines.slice(-80);
   }
 }
 
@@ -235,6 +367,24 @@ function updateBuildModalStatus() {
   if (selectedJob.value.status === "completed") {
     closeBuildModal();
     flash.value = "Build complete. Continue to Step 3 to download or deploy.";
+  }
+}
+
+function updateDeployModalStatus() {
+  if (!deployModal.visible || !selectedJob.value || deployModal.jobId !== selectedJob.value.job_id) {
+    return;
+  }
+
+  if (selectedJob.value.status === "deploy_failed" || selectedJob.value.status === "failed") {
+    deployModal.failed = true;
+    deployModal.error = selectedJob.value.error_message || "Deployment failed.";
+    return;
+  }
+
+  if (selectedJob.value.status === "completed" && hasCompletedDeployment.value) {
+    closeDeployModal();
+    deployToGithub.value = false;
+    flash.value = "GitHub deployment completed. Links are now available in Step 3.";
   }
 }
 
@@ -278,6 +428,7 @@ async function startGithubAuth() {
   busy.githubAuthFlow = true;
   flash.value = "";
   try {
+    saveUiDraft();
     const data = await api("/api/auth/github/start");
     window.location.href = data.url;
   } catch (error) {
@@ -291,6 +442,7 @@ async function installGithubApp() {
   busy.githubAuthFlow = true;
   flash.value = "";
   try {
+    saveUiDraft();
     const data = await api("/api/auth/github/start");
     if (!data.install_url) {
       flash.value =
@@ -407,11 +559,12 @@ async function deploySelectedJob() {
       }),
     });
 
+    openDeployModal(selectedJobId.value);
     const jobResponse = await api("/api/jobs");
     jobs.value = dedupeJobs(jobResponse.jobs);
     await refreshSelectedJob();
-    flash.value = "GitHub deployment started for selected build.";
   } catch (error) {
+    closeDeployModal();
     flash.value = `Failed to deploy build: ${error.message}`;
   } finally {
     busy.deployingJob = false;
@@ -445,9 +598,11 @@ async function refreshSelectedJob() {
         events.value = events.value.slice(-400);
       }
       appendBuildModalEvents(eventResult.events);
+      appendDeployModalEvents(eventResult.events);
       nextAfter.value = eventResult.next_after;
     }
     updateBuildModalStatus();
+    updateDeployModalStatus();
   } catch (error) {
     flash.value = `Failed to refresh selected job: ${error.message}`;
   }
@@ -508,7 +663,9 @@ async function resetSession() {
     deployForm.enablePages = true;
     deployForm.branch = "main";
     deployForm.deployPath = "/";
+    clearUiDraft();
     closeBuildModal();
+    closeDeployModal();
     await refreshIntegrations();
     llmConfigExpanded.value = true;
     flash.value = "Session reset complete. Integrations and pending state were cleared.";
@@ -539,6 +696,8 @@ watch(
 );
 
 onMounted(async () => {
+  restoreUiDraft();
+
   const params = new URLSearchParams(window.location.search);
   if (params.get("github") === "connected") {
     flash.value = "GitHub connected for current session.";
@@ -573,7 +732,7 @@ onBeforeUnmount(() => {
       <div class="session-card">
         <p class="label">Session ID</p>
         <code>{{ session?.session_id || "loading" }}</code>
-        <button class="ghost" :disabled="busy.resettingSession || buildModal.visible" @click="resetSession">
+        <button class="ghost" :disabled="busy.resettingSession || isAnyProgressModalVisible" @click="resetSession">
           {{ busy.resettingSession ? "Resetting..." : "Reset Session" }}
         </button>
       </div>
@@ -621,7 +780,7 @@ onBeforeUnmount(() => {
               Model
               <input v-model="llmForm.model" type="text" placeholder="sonar-pro" />
             </label>
-            <button :disabled="busy.savingLlm || buildModal.visible">
+            <button :disabled="busy.savingLlm || isAnyProgressModalVisible">
               {{ busy.savingLlm ? "Saving..." : "Save LLM Config" }}
             </button>
           </form>
@@ -680,71 +839,89 @@ onBeforeUnmount(() => {
             <span v-else>Available after build completes.</span>
           </p>
 
-          <label class="check-row deploy-choice">
-            <input v-model="deployToGithub" type="checkbox" :disabled="!canDownloadSelectedJob" />
-            Deploy this to my GitHub account
-          </label>
-
-          <div v-if="deployToGithub" class="stack delivery-box">
-            <div class="integration-row compact-row">
-              <div>
-                <h3>GitHub App</h3>
-                <p v-if="integrations.github.connected">
-                  Connected as <strong>{{ integrations.github.username }}</strong>
-                </p>
-                <p v-else>Not connected</p>
-              </div>
-              <div class="row-actions">
-                <template v-if="!integrations.github.connected">
-                  <button class="ghost" :disabled="busy.githubAuthFlow" @click="installGithubApp">Install App</button>
-                  <button :disabled="busy.githubAuthFlow" @click="startGithubAuth">Connect GitHub</button>
-                </template>
-                <button v-else class="ghost" @click="disconnectGithub">Disconnect</button>
-              </div>
-            </div>
-
-            <form v-if="integrations.github.connected" class="stack" @submit.prevent="deploySelectedJob">
-              <label>
-                GitHub Repository Name
-                <input v-model="deployForm.repoName" type="text" required />
-              </label>
-              <label>
-                Visibility
-                <select v-model="deployForm.visibility">
-                  <option value="public">Public</option>
-                  <option value="private">Private</option>
-                </select>
-              </label>
-
-              <p v-if="deployForm.visibility === 'private'" class="private-pages-note">
-                Private repositories may not support GitHub Pages on your current plan. Pages is disabled.
-              </p>
-
-              <div class="split">
-                <label>
-                  Branch
-                  <input v-model="deployForm.branch" type="text" />
-                </label>
-                <label>
-                  Pages Path
-                  <input v-model="deployForm.deployPath" type="text" />
-                </label>
-              </div>
-
-              <label class="check-row">
-                <input
-                  v-model="deployForm.enablePages"
-                  type="checkbox"
-                  :disabled="deployForm.visibility === 'private'"
-                />
-                Enable GitHub Pages after push
-              </label>
-
-              <button :disabled="!canDeploySelectedJob">
-                {{ busy.deployingJob ? "Deploying..." : "Deploy to GitHub" }}
-              </button>
-            </form>
+          <div v-if="hasCompletedDeployment" class="stack delivery-box">
+            <p><strong>Deployment complete.</strong></p>
+            <p>
+              <strong>Repository:</strong>
+              <a :href="selectedJob.repo_url" target="_blank">{{ selectedJob.repo_url }}</a>
+            </p>
+            <p>
+              <strong>Pages:</strong>
+              <a v-if="selectedPagesUrl" :href="selectedPagesUrl" target="_blank" :title="pagesLinkHoverTitle">
+                {{ selectedPagesUrl }}{{ isSelectedPagesUrlEstimated ? " (estimated)" : "" }}
+              </a>
+              <span v-else>-</span>
+            </p>
+            <p><strong>Commit:</strong> <code>{{ selectedJob.commit_sha || "-" }}</code></p>
           </div>
+
+          <template v-else>
+            <label class="check-row deploy-choice">
+              <input v-model="deployToGithub" type="checkbox" :disabled="!canDownloadSelectedJob" />
+              Deploy this to my GitHub account
+            </label>
+
+            <div v-if="deployToGithub" class="stack delivery-box">
+              <div class="integration-row compact-row">
+                <div>
+                  <h3>GitHub App</h3>
+                  <p v-if="integrations.github.connected">
+                    Connected as <strong>{{ integrations.github.username }}</strong>
+                  </p>
+                  <p v-else>Not connected</p>
+                </div>
+                <div class="row-actions">
+                  <template v-if="!integrations.github.connected">
+                    <button class="ghost" :disabled="busy.githubAuthFlow" @click="installGithubApp">Install App</button>
+                    <button :disabled="busy.githubAuthFlow" @click="startGithubAuth">Connect GitHub</button>
+                  </template>
+                  <button v-else class="ghost" @click="disconnectGithub">Disconnect</button>
+                </div>
+              </div>
+
+              <form v-if="integrations.github.connected" class="stack" @submit.prevent="deploySelectedJob">
+                <label>
+                  GitHub Repository Name
+                  <input v-model="deployForm.repoName" type="text" required />
+                </label>
+                <label>
+                  Visibility
+                  <select v-model="deployForm.visibility">
+                    <option value="public">Public</option>
+                    <option value="private">Private</option>
+                  </select>
+                </label>
+
+                <p v-if="deployForm.visibility === 'private'" class="private-pages-note">
+                  Private repositories may not support GitHub Pages on your current plan. Pages is disabled.
+                </p>
+
+                <div class="split">
+                  <label>
+                    Branch
+                    <input v-model="deployForm.branch" type="text" />
+                  </label>
+                  <label>
+                    Pages Path
+                    <input v-model="deployForm.deployPath" type="text" />
+                  </label>
+                </div>
+
+                <label class="check-row">
+                  <input
+                    v-model="deployForm.enablePages"
+                    type="checkbox"
+                    :disabled="deployForm.visibility === 'private'"
+                  />
+                  Enable GitHub Pages after push
+                </label>
+
+                <button :disabled="!canDeploySelectedJob">
+                  {{ busy.deployingJob ? "Deploying..." : "Deploy to GitHub" }}
+                </button>
+              </form>
+            </div>
+          </template>
         </div>
         </details>
 
@@ -811,6 +988,20 @@ onBeforeUnmount(() => {
 
       <p v-if="buildModal.failed" class="error">{{ buildModal.error }}</p>
       <button v-if="buildModal.failed" @click="closeBuildModal">Close</button>
+    </div>
+  </div>
+
+  <div v-if="deployModal.visible" class="build-overlay">
+    <div class="build-popup">
+      <div class="build-head">
+        <div v-if="!deployModal.failed" class="spinner" aria-hidden="true"></div>
+        <h3>{{ deployModal.failed ? "Deployment failed" : "Deploying to GitHub" }}</h3>
+      </div>
+
+      <pre class="build-log"><code>{{ deployModal.lines.join("\n") || "> waiting for worker output..." }}</code></pre>
+
+      <p v-if="deployModal.failed" class="error">{{ deployModal.error }}</p>
+      <button v-if="deployModal.failed" @click="closeDeployModal">Close</button>
     </div>
   </div>
 </template>
