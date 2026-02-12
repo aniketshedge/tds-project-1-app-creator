@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field
 from pydantic_settings import SettingsConfigDict
 
 
@@ -27,15 +27,14 @@ class JobCreatePayload(BaseModel):
 
     title: str = Field(min_length=1)
     brief: str = Field(min_length=1)
-    delivery_mode: Literal["github", "zip"] = "github"
+    delivery_mode: Literal["github", "zip"] = "zip"
     repo: Optional[RepoConfig] = None
     deployment: DeploymentConfig = Field(default_factory=DeploymentConfig)
 
-    @model_validator(mode="after")
-    def validate_delivery_dependencies(self) -> "JobCreatePayload":
-        if self.delivery_mode == "github" and self.repo is None:
-            raise ValueError("repo is required when delivery_mode is 'github'")
-        return self
+
+class GitHubDeployPayload(BaseModel):
+    repo: RepoConfig
+    deployment: DeploymentConfig = Field(default_factory=DeploymentConfig)
 
 
 class LLMIntegrationRequest(BaseModel):

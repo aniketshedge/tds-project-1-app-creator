@@ -17,13 +17,14 @@ const busy = reactive({
   bootstrap: true,
   savingLlm: false,
   creatingJob: false,
+  deployingJob: false,
   resettingSession: false,
   githubAuthFlow: false,
 });
 
 const flash = ref("");
 const llmConfigExpanded = ref(true);
-const showActiveOnlyJobs = ref(true);
+const showActiveOnlyJobs = ref(false);
 
 const llmForm = reactive({
   provider: "perplexity",
@@ -33,10 +34,12 @@ const llmForm = reactive({
 
 const jobForm = reactive({
   title: "",
-  deliveryMode: "github",
+  brief: "",
+});
+
+const deployForm = reactive({
   repoName: "",
   visibility: "public",
-  brief: "",
   enablePages: true,
   branch: "main",
   deployPath: "/",
@@ -45,17 +48,21 @@ const jobForm = reactive({
 const attachmentFiles = ref([]);
 const pollHandle = ref(null);
 
-const ACTIVE_JOB_STATUSES = new Set(["queued", "in_progress", "deployed"]);
+const ACTIVE_JOB_STATUSES = new Set(["queued", "in_progress", "deploying"]);
 const pagesLinkHoverTitle = "GitHub Pages can take a few minutes to become live after deployment.";
 
-const canCreateJob = computed(() => {
-  if (!integrations.value.llm.configured) {
+const canCreateJob = computed(() => integrations.value.llm.configured);
+const canDeploySelectedJob = computed(() => {
+  if (!selectedJob.value || !selectedJob.value.download_url) {
     return false;
   }
-  if (jobForm.deliveryMode === "zip") {
-    return true;
+  if (!integrations.value.github.connected) {
+    return false;
   }
-  return integrations.value.github.connected;
+  if (!deployForm.repoName.trim()) {
+    return false;
+  }
+  return !busy.deployingJob && !["queued", "in_progress", "deploying"].includes(selectedJob.value.status);
 });
 const hasSavedLlmConfig = computed(() => integrations.value.llm.configured);
 const selectedPagesUrl = computed(() => buildPagesUrl(selectedJob.value));
@@ -114,6 +121,18 @@ function syncSelectedJobWithFilters() {
   }
 }
 
+function syncDeployFormFromSelectedJob() {
+  if (!selectedJob.value) {
+    return;
+  }
+  if (selectedJob.value.repo_name) {
+    deployForm.repoName = selectedJob.value.repo_name;
+  }
+  if (selectedJob.value.repo_visibility) {
+    deployForm.visibility = selectedJob.value.repo_visibility;
+  }
+}
+
 async function bootstrap() {
   busy.bootstrap = true;
   try {
@@ -131,6 +150,7 @@ async function bootstrap() {
     if (displayedJobs.value.length > 0) {
       selectedJobId.value = displayedJobs.value[0].job_id;
       await refreshSelectedJob();
+      syncDeployFormFromSelectedJob();
     }
   } catch (error) {
     flash.value = `Failed to initialize: ${error.message}`;
@@ -228,19 +248,7 @@ async function createJob() {
     const payload = {
       title: jobForm.title,
       brief: jobForm.brief,
-      delivery_mode: jobForm.deliveryMode,
     };
-    if (jobForm.deliveryMode === "github") {
-      payload.repo = {
-        name: jobForm.repoName,
-        visibility: jobForm.visibility,
-      };
-      payload.deployment = {
-        enable_pages: jobForm.enablePages,
-        branch: jobForm.branch,
-        path: jobForm.deployPath,
-      };
-    }
 
     const formData = new FormData();
     formData.append("payload", JSON.stringify(payload));
@@ -257,11 +265,47 @@ async function createJob() {
     jobs.value = dedupeJobs(jobResponse.jobs);
     selectedJobId.value = result.job_id;
     await refreshSelectedJob();
-    flash.value = `Job ${result.job_id} queued.`;
+    syncDeployFormFromSelectedJob();
+    flash.value = `Build job ${result.job_id} queued.`;
   } catch (error) {
     flash.value = `Failed to create job: ${error.message}`;
   } finally {
     busy.creatingJob = false;
+  }
+}
+
+async function deploySelectedJob() {
+  if (!selectedJobId.value) {
+    return;
+  }
+
+  busy.deployingJob = true;
+  flash.value = "";
+  try {
+    await api(`/api/jobs/${selectedJobId.value}/deploy`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        repo: {
+          name: deployForm.repoName,
+          visibility: deployForm.visibility,
+        },
+        deployment: {
+          enable_pages: deployForm.enablePages,
+          branch: deployForm.branch,
+          path: deployForm.deployPath,
+        },
+      }),
+    });
+
+    const jobResponse = await api("/api/jobs");
+    jobs.value = dedupeJobs(jobResponse.jobs);
+    await refreshSelectedJob();
+    flash.value = "GitHub deployment started for selected build.";
+  } catch (error) {
+    flash.value = `Failed to deploy build: ${error.message}`;
+  } finally {
+    busy.deployingJob = false;
   }
 }
 
@@ -361,6 +405,11 @@ async function resetSession() {
     events.value = [];
     nextAfter.value = 0;
     llmForm.api_key = "";
+    deployForm.repoName = "";
+    deployForm.visibility = "public";
+    deployForm.enablePages = true;
+    deployForm.branch = "main";
+    deployForm.deployPath = "/";
     await refreshIntegrations();
     llmConfigExpanded.value = true;
     flash.value = "Session reset complete. Integrations and pending state were cleared.";
@@ -376,6 +425,7 @@ watch(selectedJobId, async (newValue, oldValue) => {
     events.value = [];
     nextAfter.value = 0;
     await refreshSelectedJob();
+    syncDeployFormFromSelectedJob();
   }
 });
 
@@ -384,19 +434,10 @@ watch(showActiveOnlyJobs, () => {
 });
 
 watch(
-  () => jobForm.visibility,
+  () => deployForm.visibility,
   (visibility) => {
     if (visibility === "private") {
-      jobForm.enablePages = false;
-    }
-  }
-);
-
-watch(
-  () => jobForm.deliveryMode,
-  (mode) => {
-    if (mode === "zip") {
-      jobForm.enablePages = false;
+      deployForm.enablePages = false;
     }
   }
 );
@@ -428,7 +469,7 @@ onBeforeUnmount(() => {
         <p class="eyebrow">Self-Hosted Builder</p>
         <h1>App Creator Console</h1>
         <p class="subtext">
-          Generate, publish, and track static apps with your own GitHub and LLM credentials.
+          Generate app files once, then deliver them as ZIP and/or deploy them to GitHub.
         </p>
       </div>
       <div class="session-card">
@@ -503,61 +544,21 @@ onBeforeUnmount(() => {
       </section>
 
       <section class="panel">
-        <h2>Create Job</h2>
+        <h2>Create Build</h2>
+        <p class="hint create-hint">
+          This generates project files once. After completion, both ZIP download and GitHub deploy are available.
+        </p>
+
         <form class="stack" @submit.prevent="createJob">
           <label>
             Title
             <input v-model="jobForm.title" type="text" required />
           </label>
-          <label>
-            Delivery Mode
-            <select v-model="jobForm.deliveryMode">
-              <option value="github">Deploy to GitHub</option>
-              <option value="zip">Generate ZIP package</option>
-            </select>
-          </label>
-
-          <div v-if="jobForm.deliveryMode === 'github'" class="stack">
-            <label>
-              GitHub Repository Name
-              <input v-model="jobForm.repoName" type="text" required />
-            </label>
-            <label>
-              Visibility
-              <select v-model="jobForm.visibility">
-                <option value="public">Public</option>
-                <option value="private">Private</option>
-              </select>
-            </label>
-
-            <p v-if="jobForm.visibility === 'private'" class="private-pages-note">
-              Private repositories may not support GitHub Pages on your current plan. Pages is disabled.
-            </p>
-          </div>
-          <p v-else class="private-pages-note">This job will generate a ZIP package you can download directly.</p>
 
           <label>
             Brief
             <textarea v-model="jobForm.brief" rows="7" required></textarea>
           </label>
-
-          <template v-if="jobForm.deliveryMode === 'github'">
-            <div class="split">
-              <label>
-                Branch
-                <input v-model="jobForm.branch" type="text" />
-              </label>
-              <label>
-                Pages Path
-                <input v-model="jobForm.deployPath" type="text" />
-              </label>
-            </div>
-
-            <label class="check-row">
-              <input v-model="jobForm.enablePages" type="checkbox" :disabled="jobForm.visibility === 'private'" />
-              Enable GitHub Pages after push
-            </label>
-          </template>
 
           <label>
             Attachments
@@ -565,7 +566,7 @@ onBeforeUnmount(() => {
           </label>
 
           <button :disabled="!canCreateJob || busy.creatingJob || busy.bootstrap">
-            {{ busy.creatingJob ? "Submitting..." : "Create Job" }}
+            {{ busy.creatingJob ? "Submitting..." : "Generate Project Files" }}
           </button>
         </form>
       </section>
@@ -603,9 +604,11 @@ onBeforeUnmount(() => {
           <h3>Selected Job</h3>
           <p><strong>ID:</strong> {{ selectedJob.job_id }}</p>
           <p><strong>Status:</strong> {{ selectedJob.status }}</p>
+          <p><strong>Artifact:</strong> {{ selectedJob.artifact_name || "pending" }}</p>
           <p>
             <strong>Repo:</strong>
-            <a :href="selectedJob.repo_url" target="_blank">{{ selectedJob.repo_url || "-" }}</a>
+            <a v-if="selectedJob.repo_url" :href="selectedJob.repo_url" target="_blank">{{ selectedJob.repo_url }}</a>
+            <span v-else>-</span>
           </p>
           <p>
             <strong>Pages:</strong>
@@ -615,10 +618,65 @@ onBeforeUnmount(() => {
             <span v-else>-</span>
           </p>
           <p><strong>Commit:</strong> <code>{{ selectedJob.commit_sha || "-" }}</code></p>
-          <p v-if="selectedJob.download_url">
-            <strong>Download:</strong>
-            <a :href="selectedJob.download_url">Download ZIP package</a>
-          </p>
+
+          <div class="delivery-box stack">
+            <h4>Delivery</h4>
+            <p>
+              <strong>ZIP:</strong>
+              <a v-if="selectedJob.download_url" :href="selectedJob.download_url">Download ZIP package</a>
+              <span v-else>Available after build completes.</span>
+            </p>
+
+            <div class="stack">
+              <h4>Deploy to GitHub</h4>
+              <p v-if="!integrations.github.connected" class="hint">
+                Connect GitHub in Integrations to deploy this build.
+              </p>
+
+              <form v-else class="stack" @submit.prevent="deploySelectedJob">
+                <label>
+                  GitHub Repository Name
+                  <input v-model="deployForm.repoName" type="text" required />
+                </label>
+                <label>
+                  Visibility
+                  <select v-model="deployForm.visibility">
+                    <option value="public">Public</option>
+                    <option value="private">Private</option>
+                  </select>
+                </label>
+
+                <p v-if="deployForm.visibility === 'private'" class="private-pages-note">
+                  Private repositories may not support GitHub Pages on your current plan. Pages is disabled.
+                </p>
+
+                <div class="split">
+                  <label>
+                    Branch
+                    <input v-model="deployForm.branch" type="text" />
+                  </label>
+                  <label>
+                    Pages Path
+                    <input v-model="deployForm.deployPath" type="text" />
+                  </label>
+                </div>
+
+                <label class="check-row">
+                  <input
+                    v-model="deployForm.enablePages"
+                    type="checkbox"
+                    :disabled="deployForm.visibility === 'private'"
+                  />
+                  Enable GitHub Pages after push
+                </label>
+
+                <button :disabled="!canDeploySelectedJob">
+                  {{ busy.deployingJob ? "Deploying..." : "Deploy to GitHub" }}
+                </button>
+              </form>
+            </div>
+          </div>
+
           <p v-if="selectedJob.error_message" class="error">{{ selectedJob.error_message }}</p>
 
           <h4>Events</h4>

@@ -127,13 +127,20 @@ class SessionStore:
         self.redis.delete(self._llm_key(session_id))
 
     def snapshot_job_secrets(
-        self, job_id: str, session_id: str, *, include_github: bool = True
+        self,
+        job_id: str,
+        session_id: str,
+        *,
+        include_llm: bool = True,
+        include_github: bool = True,
     ) -> dict[str, dict[str, str | None]]:
-        llm = self.get_llm_credentials(session_id)
-        if not llm:
-            raise ValueError("Missing required integrations: LLM credentials must be configured")
+        payload: dict[str, dict[str, str | None]] = {}
+        if include_llm:
+            llm = self.get_llm_credentials(session_id)
+            if not llm:
+                raise ValueError("Missing required integrations: LLM credentials must be configured")
+            payload["llm"] = llm
 
-        payload: dict[str, dict[str, str | None]] = {"llm": llm}
         if include_github:
             github = self.get_github_credentials(session_id)
             if not github:

@@ -29,7 +29,7 @@ class TaskRepository:
                     status TEXT NOT NULL,
                     llm_provider TEXT NOT NULL,
                     llm_model TEXT,
-                    delivery_mode TEXT NOT NULL DEFAULT 'github',
+                    delivery_mode TEXT NOT NULL DEFAULT 'zip',
                     repo_name TEXT,
                     repo_visibility TEXT,
                     repo_full_name TEXT,
@@ -78,7 +78,7 @@ class TaskRepository:
                     ON job_events(job_id, id);
                 """
             )
-            self._ensure_column(conn, "jobs", "delivery_mode", "TEXT NOT NULL DEFAULT 'github'")
+            self._ensure_column(conn, "jobs", "delivery_mode", "TEXT NOT NULL DEFAULT 'zip'")
             self._ensure_column(conn, "jobs", "artifact_path", "TEXT")
             self._ensure_column(conn, "jobs", "artifact_name", "TEXT")
             conn.commit()
@@ -164,6 +164,8 @@ class TaskRepository:
         job_id: str,
         *,
         status: Optional[str] = None,
+        repo_name: Optional[str] = None,
+        repo_visibility: Optional[str] = None,
         repo_full_name: Optional[str] = None,
         repo_url: Optional[str] = None,
         pages_url: Optional[str] = None,
@@ -178,6 +180,10 @@ class TaskRepository:
         updates: dict[str, Any] = {"updated_at": self._now_iso()}
         if status is not None:
             updates["status"] = status
+        if repo_name is not None:
+            updates["repo_name"] = repo_name
+        if repo_visibility is not None:
+            updates["repo_visibility"] = repo_visibility
         if repo_full_name is not None:
             updates["repo_full_name"] = repo_full_name
         if repo_url is not None:
@@ -259,7 +265,7 @@ class TaskRepository:
             status=row["status"],
             llm_provider=row["llm_provider"],
             llm_model=row["llm_model"],
-            delivery_mode=row["delivery_mode"] or "github",
+            delivery_mode=row["delivery_mode"] or "zip",
             repo_name=row["repo_name"],
             repo_visibility=row["repo_visibility"],
             repo_full_name=row["repo_full_name"],

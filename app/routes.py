@@ -20,7 +20,7 @@ from flask import (
 from pydantic import ValidationError
 
 from .config import Settings
-from .models import JobCreatePayload, LLMIntegrationRequest
+from .models import GitHubDeployPayload, JobCreatePayload, LLMIntegrationRequest
 from .services.github_app_auth import (
     build_user_authorization_url,
     exchange_code_for_user_token,
@@ -212,23 +212,12 @@ def register_routes(app: Flask) -> None:
             return jsonify({"error": "validation_error", "details": exc.errors()}), 400
 
         llm = store.get_llm_credentials(session_id)
-        github = store.get_github_credentials(session_id)
         if not llm:
             return (
                 jsonify(
                     {
                         "error": "integrations_required",
                         "message": "Configure an LLM provider before creating a job",
-                    }
-                ),
-                400,
-            )
-        if payload.delivery_mode == "github" and not github:
-            return (
-                jsonify(
-                    {
-                        "error": "integrations_required",
-                        "message": "Connect GitHub App for GitHub delivery mode, or switch to ZIP download mode",
                     }
                 ),
                 400,
@@ -270,11 +259,81 @@ def register_routes(app: Flask) -> None:
         store.snapshot_job_secrets(
             job_id,
             session_id,
-            include_github=(payload.delivery_mode == "github"),
+            include_llm=True,
+            include_github=False,
         )
         queue.enqueue("app.workflows.runner.process_job", job_id)
 
         response = jsonify({"job_id": job_id, "status": "queued"})
+        if is_new:
+            _set_session_cookie(response, session_id, settings)
+        return response
+
+    @app.post("/api/jobs/<job_id>/deploy")
+    def deploy_job(job_id: str) -> Response:
+        session_id, is_new = _get_or_create_session()
+        repository: TaskRepository = current_app.config["repository"]
+        settings: Settings = current_app.config["settings"]
+        queue = current_app.config["queue"]
+        store: SessionStore = current_app.config["session_store"]
+
+        job = repository.fetch_job(job_id)
+        if not job or job.session_id != session_id:
+            return jsonify({"error": "not_found"}), 404
+        if job.status in {"queued", "in_progress", "deploying"}:
+            return jsonify({"error": "job_not_ready", "message": "Wait for generation to complete"}), 409
+        artifact_path = _resolve_artifact_path(job, settings)
+        if artifact_path is None:
+            return (
+                jsonify(
+                    {
+                        "error": "artifact_not_available",
+                        "message": "Generate project files first before deploying to GitHub",
+                    }
+                ),
+                400,
+            )
+        if not store.get_github_credentials(session_id):
+            return (
+                jsonify(
+                    {
+                        "error": "integrations_required",
+                        "message": "Connect GitHub App before deploying",
+                    }
+                ),
+                400,
+            )
+
+        try:
+            deploy_payload = GitHubDeployPayload.model_validate(request.get_json(silent=True) or {})
+        except ValidationError as exc:
+            return jsonify({"error": "validation_error", "details": exc.errors()}), 400
+
+        secret_ref = f"{job_id}:deploy:{uuid4().hex}"
+        store.snapshot_job_secrets(
+            secret_ref,
+            session_id,
+            include_llm=False,
+            include_github=True,
+        )
+
+        repository.update_job(
+            job_id,
+            status="deploying",
+            repo_name=deploy_payload.repo.name,
+            repo_visibility=deploy_payload.repo.visibility,
+            error_code="",
+            error_message="",
+        )
+        repository.append_event(job_id, "info", "GitHub deployment queued")
+        queue.enqueue(
+            "app.workflows.runner.deploy_job_artifact",
+            job_id,
+            deploy_payload.model_dump(mode="json"),
+            secret_ref,
+        )
+
+        response = jsonify({"job_id": job_id, "status": "deploying"})
         if is_new:
             _set_session_cookie(response, session_id, settings)
         return response
@@ -342,16 +401,9 @@ def register_routes(app: Flask) -> None:
         job = repository.fetch_job(job_id)
         if not job or job.session_id != session_id:
             return jsonify({"error": "not_found"}), 404
-        if not job.artifact_path:
+        artifact_path = _resolve_artifact_path(job, settings)
+        if artifact_path is None:
             return jsonify({"error": "artifact_not_available"}), 404
-
-        artifact_path = Path(job.artifact_path).resolve()
-        package_root = Path(settings.package_root).resolve()
-        try:
-            artifact_path.relative_to(package_root)
-        except ValueError:
-            logger.warning("Blocked artifact download outside package root: %s", artifact_path)
-            return jsonify({"error": "invalid_artifact_path"}), 400
         if not artifact_path.exists() or not artifact_path.is_file():
             return jsonify({"error": "artifact_not_found"}), 404
 
@@ -451,6 +503,20 @@ def _frontend_redirect_url(settings: Settings, *, status: str, reason: str | Non
     if reason:
         query["reason"] = reason
     return f"{path}?{urlencode(query)}"
+
+
+def _resolve_artifact_path(job, settings: Settings) -> Path | None:
+    if not job.artifact_path:
+        return None
+
+    artifact_path = Path(job.artifact_path).resolve()
+    package_root = Path(settings.package_root).resolve()
+    try:
+        artifact_path.relative_to(package_root)
+    except ValueError:
+        logger.warning("Blocked artifact access outside package root: %s", artifact_path)
+        return None
+    return artifact_path
 
 
 def _serialize_job(job) -> dict[str, object]:

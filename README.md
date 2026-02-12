@@ -22,11 +22,12 @@ Sensitive data policy:
 ## Core Flow
 
 1. Browser gets a session cookie from `/api/session`.
-2. User connects GitHub via GitHub App user authorization.
+2. User optionally connects GitHub via GitHub App user authorization.
 3. User configures LLM provider (currently Perplexity) using an API key.
-4. User submits a job (brief + optional attachments).
-5. Worker generates files with the LLM, creates a GitHub repo, pushes code, enables Pages.
-6. UI polls job status and event logs.
+4. User submits a build job (brief + optional attachments).
+5. Worker generates files and stores a downloadable ZIP artifact.
+6. User can download the ZIP and/or trigger GitHub deployment from the same build.
+7. UI polls job status and event logs.
 
 ## API (v1)
 
@@ -39,10 +40,11 @@ Sensitive data policy:
 - `GET /api/auth/github/callback`
 - `POST /api/auth/github/disconnect`
 - `POST /api/jobs`
+- `POST /api/jobs/<job_id>/deploy`
 - `GET /api/jobs`
 - `GET /api/jobs/<job_id>`
 - `GET /api/jobs/<job_id>/events?after=<id>`
-- `GET /api/jobs/<job_id>/download` (for ZIP delivery jobs)
+- `GET /api/jobs/<job_id>/download`
 
 `POST /api/jobs` expects `multipart/form-data`:
 - `payload`: JSON string
@@ -53,8 +55,14 @@ Payload schema:
 ```json
 {
   "title": "my-app",
-  "brief": "Build a static app that ...",
-  "delivery_mode": "github",
+  "brief": "Build a static app that ..."
+}
+```
+
+`POST /api/jobs/<job_id>/deploy` expects JSON:
+
+```json
+{
   "repo": {
     "name": "my-app",
     "visibility": "public"
@@ -66,10 +74,6 @@ Payload schema:
   }
 }
 ```
-
-`delivery_mode` options:
-- `github`: deploy to connected GitHub account (requires GitHub integration)
-- `zip`: generate downloadable ZIP package (GitHub not required)
 
 ## Local Development
 
