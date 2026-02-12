@@ -29,12 +29,6 @@ class WorkspaceManager:
         if manifest.readme:
             (self.path / "README.md").write_text(manifest.readme, encoding="utf-8")
 
-    def write_attachment_files(self, attachments: list[tuple[str, bytes]]) -> None:
-        for file_name, payload in attachments:
-            target = self._safe_target(file_name)
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(payload)
-
     def run_commands(self, commands: list[str]) -> None:
         for command in commands:
             logger.info("Executing workspace command: %s", command)

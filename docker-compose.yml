@@ -11,7 +11,6 @@ services:
     environment:
       REDIS_URL: redis://redis:6379/0
       DATABASE_PATH: /app/data/tasks.db
-      ATTACHMENT_ROOT: /app/data/attachments
       PACKAGE_ROOT: /app/data/packages
       PREVIEW_ROOT: /app/data/previews
       WORKSPACE_ROOT: /tmp/task-runner
@@ -33,7 +32,6 @@ services:
     environment:
       REDIS_URL: redis://redis:6379/0
       DATABASE_PATH: /app/data/tasks.db
-      ATTACHMENT_ROOT: /app/data/attachments
       PACKAGE_ROOT: /app/data/packages
       PREVIEW_ROOT: /app/data/previews
       WORKSPACE_ROOT: /tmp/task-runner

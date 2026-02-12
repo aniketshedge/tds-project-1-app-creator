@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Generator, Optional
 
-from .models import JobAttachmentRecord, JobCreatePayload, JobEventRecord, JobRecord
+from .models import JobCreatePayload, JobEventRecord, JobRecord
 
 
 class TaskRepository:
@@ -50,20 +50,6 @@ class TaskRepository:
                     ON jobs(session_id, created_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_jobs_status_updated
                     ON jobs(status, updated_at DESC);
-
-                CREATE TABLE IF NOT EXISTS job_attachments (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    job_id TEXT NOT NULL,
-                    file_name TEXT NOT NULL,
-                    media_type TEXT,
-                    size_bytes INTEGER NOT NULL,
-                    sha256 TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    FOREIGN KEY(job_id) REFERENCES jobs(id) ON DELETE CASCADE
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_attachments_job
-                    ON job_attachments(job_id);
 
                 CREATE TABLE IF NOT EXISTS job_events (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -127,24 +113,6 @@ class TaskRepository:
                     now,
                     now,
                 ),
-            )
-            conn.commit()
-
-    def add_attachment(
-        self,
-        job_id: str,
-        file_name: str,
-        media_type: Optional[str],
-        size_bytes: int,
-        sha256: str,
-    ) -> None:
-        with self._connection() as conn:
-            conn.execute(
-                """
-                INSERT INTO job_attachments (job_id, file_name, media_type, size_bytes, sha256, created_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (job_id, file_name, media_type, size_bytes, sha256, self._now_iso()),
             )
             conn.commit()
 
@@ -243,18 +211,6 @@ class TaskRepository:
             ).fetchall()
             return [self._row_to_event(row) for row in rows]
 
-    def list_attachments(self, job_id: str) -> list[JobAttachmentRecord]:
-        with self._connection() as conn:
-            rows = conn.execute(
-                """
-                SELECT * FROM job_attachments
-                WHERE job_id = ?
-                ORDER BY id ASC
-                """,
-                (job_id,),
-            ).fetchall()
-            return [self._row_to_attachment(row) for row in rows]
-
     def _row_to_job(self, row: sqlite3.Row) -> JobRecord:
         return JobRecord(
             id=row["id"],
@@ -290,17 +246,6 @@ class TaskRepository:
         if column in existing:
             return
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")
-
-    def _row_to_attachment(self, row: sqlite3.Row) -> JobAttachmentRecord:
-        return JobAttachmentRecord(
-            id=row["id"],
-            job_id=row["job_id"],
-            file_name=row["file_name"],
-            media_type=row["media_type"],
-            size_bytes=row["size_bytes"],
-            sha256=row["sha256"],
-            created_at=datetime.fromisoformat(row["created_at"]),
-        )
 
     def _row_to_event(self, row: sqlite3.Row) -> JobEventRecord:
         return JobEventRecord(

@@ -25,8 +25,8 @@ class DeploymentConfig(BaseModel):
 class JobCreatePayload(BaseModel):
     model_config = SettingsConfigDict(extra="ignore")
 
-    title: str = Field(min_length=1)
-    brief: str = Field(min_length=1)
+    title: str = Field(min_length=1, max_length=120)
+    brief: str = Field(min_length=1, max_length=12_000)
     delivery_mode: Literal["github", "zip"] = "zip"
     repo: Optional[RepoConfig] = None
     deployment: DeploymentConfig = Field(default_factory=DeploymentConfig)
@@ -74,24 +74,6 @@ def _extract_json(candidate: str) -> str:
     if not match:
         raise ValueError("LLM response did not contain JSON manifest")
     return match.group(0)
-
-
-@dataclass
-class PromptAttachment:
-    file_name: str
-    media_type: str
-    data: bytes
-
-
-@dataclass
-class JobAttachmentRecord:
-    id: int
-    job_id: str
-    file_name: str
-    media_type: Optional[str]
-    size_bytes: int
-    sha256: str
-    created_at: datetime
 
 
 @dataclass

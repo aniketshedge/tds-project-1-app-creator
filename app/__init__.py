@@ -24,6 +24,7 @@ def create_app() -> Flask:
         static_url_path="",
     )
     app.config["settings"] = settings
+    app.config["MAX_CONTENT_LENGTH"] = settings.max_request_bytes
 
     redis = create_redis(settings.redis_url)
     app.config["redis"] = redis

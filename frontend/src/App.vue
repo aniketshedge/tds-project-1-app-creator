@@ -94,7 +94,6 @@ const deployForm = reactive({
   deployPath: "/",
 });
 
-const attachmentFiles = ref([]);
 const pollHandle = ref(null);
 const UI_DRAFT_KEY = "app-creator-ui-draft-v1";
 
@@ -691,10 +690,6 @@ function startLlmConfigChange() {
   llmConfigExpanded.value = true;
 }
 
-function onAttachmentChange(event) {
-  attachmentFiles.value = [...event.target.files];
-}
-
 async function createJob() {
   busy.creatingJob = true;
   flash.value = "";
@@ -705,15 +700,10 @@ async function createJob() {
       brief: jobForm.brief,
     };
 
-    const formData = new FormData();
-    formData.append("payload", JSON.stringify(payload));
-    for (const file of attachmentFiles.value) {
-      formData.append("files", file);
-    }
-
     const result = await api("/api/jobs", {
       method: "POST",
-      body: formData,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
     });
 
     selectedJobId.value = result.job_id;
@@ -1049,11 +1039,6 @@ onBeforeUnmount(() => {
           <label>
             Describe your application
             <textarea v-model="jobForm.brief" rows="7" required></textarea>
-          </label>
-
-          <label>
-            Attachments
-            <input type="file" multiple @change="onAttachmentChange" />
           </label>
 
           <button :disabled="!canCreateJob || busy.creatingJob || busy.bootstrap">

@@ -110,7 +110,7 @@ class GitHubClient:
                 try:
                     message = response.json().get("message", "")
                 except ValueError:
-                    message = response.text
+                    message = ""
                 if "Resource not accessible by integration" in message:
                     raise RuntimeError(
                         "GitHub App token cannot create repositories for this account. "
@@ -120,7 +120,7 @@ class GitHubClient:
                         "re-authorized after permission changes."
                     )
 
-            raise RuntimeError(f"GitHub repo creation failed: {response.text}")
+            raise RuntimeError(f"GitHub repository creation failed (status {response.status_code}).")
 
         raise RuntimeError("Could not create a unique GitHub repository name")
 
@@ -146,7 +146,22 @@ class GitHubClient:
 
         env = os.environ.copy()
         env["GIT_TERMINAL_PROMPT"] = "0"
-        remote = f"https://x-access-token:{self.token}@github.com/{repo_full_name}.git"
+        env["GIT_ASKPASS_REQUIRE"] = "force"
+        env["GITHUB_APP_TOKEN"] = self.token
+        remote = f"https://github.com/{repo_full_name}.git"
+        askpass_path = workspace / ".git-askpass.sh"
+        askpass_path.write_text(
+            (
+                "#!/bin/sh\n"
+                'case "$1" in\n'
+                '  *Username*) echo "x-access-token" ;;\n'
+                '  *) echo "$GITHUB_APP_TOKEN" ;;\n'
+                "esac\n"
+            ),
+            encoding="utf-8",
+        )
+        askpass_path.chmod(0o700)
+        env["GIT_ASKPASS"] = str(askpass_path)
 
         commands = [
             ["git", "init", "-b", branch],
@@ -158,23 +173,28 @@ class GitHubClient:
             ["git", "push", "-u", "origin", branch],
         ]
 
-        for command in commands:
-            safe_command = command[:-1] + ["***"] if command[:3] == ["git", "remote", "add"] else command
-            logger.info("Running git command: %s", " ".join(safe_command))
-            subprocess.run(command, cwd=workspace, check=True, env=env)
+        try:
+            for command in commands:
+                safe_command = command[:-1] + ["***"] if command[:3] == ["git", "remote", "add"] else command
+                logger.info("Running git command: %s", " ".join(safe_command))
+                subprocess.run(command, cwd=workspace, check=True, env=env)
 
-        commit_sha = (
-            subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=workspace)
-            .decode("utf-8")
-            .strip()
-        )
-
-        subprocess.run(["git", "remote", "remove", "origin"], cwd=workspace, check=True)
-        git_dir = workspace / ".git"
-        if git_dir.exists():
-            shutil.rmtree(git_dir)
-
-        return commit_sha
+            commit_sha = (
+                subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=workspace)
+                .decode("utf-8")
+                .strip()
+            )
+            return commit_sha
+        except subprocess.CalledProcessError as exc:
+            command = " ".join(exc.cmd) if isinstance(exc.cmd, list) else str(exc.cmd)
+            raise RuntimeError(f"Git operation failed during deployment ({command}).") from exc
+        finally:
+            subprocess.run(["git", "remote", "remove", "origin"], cwd=workspace, check=False)
+            git_dir = workspace / ".git"
+            if git_dir.exists():
+                shutil.rmtree(git_dir)
+            if askpass_path.exists():
+                askpass_path.unlink()
 
     def configure_pages(self, repo_full_name: str, branch: str, path: str) -> str:
         url = f"{API_BASE}/repos/{repo_full_name}/pages"
@@ -188,14 +208,14 @@ class GitHubClient:
                 try:
                     message = response.json().get("message", "")
                 except ValueError:
-                    message = response.text
+                    message = ""
                 if "does not support GitHub Pages for this repository" in message:
                     raise RuntimeError(
                         "GitHub Pages is not available for this repository under your current plan. "
                         "Use a public repository, disable Pages for this job, or upgrade plan "
                         "for private-repo Pages support."
                     )
-            raise RuntimeError(f"Failed to configure GitHub Pages: {response.text}")
+            raise RuntimeError(f"Failed to configure GitHub Pages (status {response.status_code}).")
 
         pages_url = f"https://{self.username}.github.io/{repo_full_name.split('/')[-1]}/"
         status_url = f"{API_BASE}/repos/{repo_full_name}/pages/builds/latest"

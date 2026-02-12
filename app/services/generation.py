@@ -5,7 +5,7 @@ from typing import Any
 
 import requests
 
-from ..models import Manifest, PromptAttachment
+from ..models import Manifest
 
 logger = logging.getLogger(__name__)
 
@@ -107,8 +107,8 @@ class UnifiedGenerationService:
         self.timeout = timeout
         self.max_retries = max_retries
 
-    def generate_manifest(self, brief: str, attachments: list[PromptAttachment]) -> Manifest:
-        prompt = self._build_prompt(brief, attachments)
+    def generate_manifest(self, brief: str) -> Manifest:
+        prompt = self._build_prompt(brief)
 
         for attempt in range(1, self.max_retries + 1):
             logger.info(
@@ -255,22 +255,10 @@ class UnifiedGenerationService:
             raise ValueError("Gemini response missing text output")
         return "\n".join(text_chunks)
 
-    def _build_prompt(self, brief: str, attachments: list[PromptAttachment]) -> str:
-        attachment_sections: list[str] = []
-        for attachment in attachments:
-            preview = attachment.data[:500].decode("utf-8", errors="replace")
-            attachment_sections.append(
-                f"- {attachment.file_name} ({attachment.media_type}, {len(attachment.data)} bytes)\n```\n{preview}\n```"
-            )
-
-        attachment_text = "\n".join(attachment_sections) if attachment_sections else "None provided."
-
+    def _build_prompt(self, brief: str) -> str:
         return f"""
 Build a static frontend project from this brief:
 {brief}
-
-Attachments:
-{attachment_text}
 
 Requirements:
 - Return ONLY JSON matching this schema:

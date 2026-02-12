@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-import hashlib
 import json
 import logging
 import shutil
@@ -219,8 +218,44 @@ def register_routes(app: Flask) -> None:
         queue = current_app.config["queue"]
         store: SessionStore = current_app.config["session_store"]
 
+        rate_limited = _enforce_rate_limit(
+            session_id=session_id,
+            action="job_submit",
+            limit=settings.job_submit_limit_per_minute,
+        )
+        if rate_limited is not None:
+            return rate_limited
+
+        if queue.count >= settings.max_pending_queue_jobs:
+            return (
+                jsonify(
+                    {
+                        "error": "queue_overloaded",
+                        "message": "Server queue is busy. Please try again in a minute.",
+                    }
+                ),
+                503,
+            )
+
+        recent_jobs = repository.list_jobs_for_session(session_id, limit=200)
+        active_jobs = [
+            job for job in recent_jobs if job.status in {"queued", "in_progress", "deploying"}
+        ]
+        if len(active_jobs) >= settings.max_active_jobs_per_session:
+            return (
+                jsonify(
+                    {
+                        "error": "too_many_active_jobs",
+                        "message": "You already have active jobs running. Wait for one to finish.",
+                    }
+                ),
+                429,
+            )
+
         try:
-            payload_dict, uploaded_files = _extract_job_payload_and_files()
+            payload_dict = request.get_json(silent=True)
+            if not isinstance(payload_dict, dict):
+                raise ValueError("Expected JSON object")
             payload = JobCreatePayload.model_validate(payload_dict)
         except ValueError as exc:
             return jsonify({"error": "bad_request", "message": str(exc)}), 400
@@ -243,35 +278,6 @@ def register_routes(app: Flask) -> None:
         repository.create_job(job_id, session_id, payload, llm["provider"], llm.get("model"))
         repository.append_event(job_id, "info", "Job queued")
 
-        attachment_dir = Path(settings.attachment_root) / job_id
-        attachment_dir.mkdir(parents=True, exist_ok=True)
-
-        for uploaded in uploaded_files:
-            safe_name = Path(uploaded["name"]).name
-            if not safe_name:
-                continue
-            data = uploaded["data"]
-            if len(data) > settings.attachment_max_bytes:
-                return (
-                    jsonify(
-                        {
-                            "error": "attachment_too_large",
-                            "message": f"Attachment {safe_name} exceeds {settings.attachment_max_bytes} bytes",
-                        }
-                    ),
-                    400,
-                )
-
-            digest = hashlib.sha256(data).hexdigest()
-            (attachment_dir / safe_name).write_bytes(data)
-            repository.add_attachment(
-                job_id=job_id,
-                file_name=safe_name,
-                media_type=uploaded.get("media_type"),
-                size_bytes=len(data),
-                sha256=digest,
-            )
-
         store.snapshot_job_secrets(
             job_id,
             session_id,
@@ -292,6 +298,25 @@ def register_routes(app: Flask) -> None:
         settings: Settings = current_app.config["settings"]
         queue = current_app.config["queue"]
         store: SessionStore = current_app.config["session_store"]
+
+        rate_limited = _enforce_rate_limit(
+            session_id=session_id,
+            action="deploy_submit",
+            limit=settings.deploy_submit_limit_per_minute,
+        )
+        if rate_limited is not None:
+            return rate_limited
+
+        if queue.count >= settings.max_pending_queue_jobs:
+            return (
+                jsonify(
+                    {
+                        "error": "queue_overloaded",
+                        "message": "Server queue is busy. Please try again in a minute.",
+                    }
+                ),
+                503,
+            )
 
         job = repository.fetch_job(job_id)
         if not job or job.session_id != session_id:
@@ -439,6 +464,14 @@ def register_routes(app: Flask) -> None:
         repository: TaskRepository = current_app.config["repository"]
         settings: Settings = current_app.config["settings"]
 
+        rate_limited = _enforce_rate_limit(
+            session_id=session_id,
+            action="preview_create",
+            limit=settings.preview_create_limit_per_minute,
+        )
+        if rate_limited is not None:
+            return rate_limited
+
         job = repository.fetch_job(job_id)
         if not job or job.session_id != session_id:
             return jsonify({"error": "not_found"}), 404
@@ -449,6 +482,17 @@ def register_routes(app: Flask) -> None:
             return jsonify({"error": "artifact_not_found"}), 404
 
         _cleanup_expired_previews(settings)
+        live_previews = _count_live_previews_for_session(settings, session_id)
+        if live_previews >= settings.max_live_previews_per_session:
+            return (
+                jsonify(
+                    {
+                        "error": "too_many_live_previews",
+                        "message": "You already have several active previews. Wait for expiry or reuse existing ones.",
+                    }
+                ),
+                429,
+            )
 
         token = uuid4().hex
         preview_root = Path(settings.preview_root).resolve()
@@ -555,36 +599,6 @@ def register_routes(app: Flask) -> None:
             return send_from_directory(static_root, "index.html")
         return jsonify({"message": "Frontend is not built yet."}), 200
 
-
-def _extract_job_payload_and_files() -> tuple[dict, list[dict[str, object]]]:
-    content_type = request.content_type or ""
-
-    if "multipart/form-data" in content_type:
-        payload_raw = request.form.get("payload")
-        if not payload_raw:
-            raise ValueError("Missing 'payload' field in multipart form")
-        try:
-            payload = json.loads(payload_raw)
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"Invalid payload JSON: {exc}") from exc
-
-        files: list[dict[str, object]] = []
-        for file_storage in request.files.getlist("files"):
-            files.append(
-                {
-                    "name": file_storage.filename or "attachment.bin",
-                    "media_type": file_storage.mimetype,
-                    "data": file_storage.read(),
-                }
-            )
-        return payload, files
-
-    payload = request.get_json(silent=True)
-    if not isinstance(payload, dict):
-        raise ValueError("Expected JSON object or multipart form data")
-    return payload, []
-
-
 def _get_or_create_session() -> tuple[str, bool]:
     settings: Settings = current_app.config["settings"]
     store: SessionStore = current_app.config["session_store"]
@@ -660,6 +674,52 @@ def _cleanup_expired_previews(settings: Settings) -> None:
         expires_at = metadata.get("expires_at")
         if not isinstance(expires_at, datetime) or expires_at <= now:
             shutil.rmtree(preview_dir, ignore_errors=True)
+
+
+def _count_live_previews_for_session(settings: Settings, session_id: str) -> int:
+    preview_root = Path(settings.preview_root).resolve()
+    if not preview_root.exists():
+        return 0
+
+    count = 0
+    now = datetime.now(timezone.utc)
+    for preview_dir in preview_root.iterdir():
+        if not preview_dir.is_dir():
+            continue
+        metadata = _read_preview_metadata(preview_dir)
+        if metadata is None:
+            continue
+        expires_at = metadata.get("expires_at")
+        if not isinstance(expires_at, datetime) or expires_at <= now:
+            continue
+        if metadata.get("session_id") == session_id:
+            count += 1
+    return count
+
+
+def _enforce_rate_limit(
+    session_id: str, action: str, limit: int, window_seconds: int = 60
+) -> tuple[Response, int] | None:
+    if limit <= 0:
+        return None
+    redis = current_app.config["redis"]
+    settings: Settings = current_app.config["settings"]
+    client_marker = request.headers.get("CF-Connecting-IP") or request.remote_addr or "unknown"
+    key = f"rate:{action}:{settings.session_cookie_name}:{session_id}:{client_marker}"
+    count = redis.incr(key)
+    if count == 1:
+        redis.expire(key, window_seconds)
+    if count <= limit:
+        return None
+    retry_after = redis.ttl(key)
+    response = jsonify(
+        {
+            "error": "rate_limited",
+            "message": "Too many requests for this action. Try again shortly.",
+            "retry_after_seconds": retry_after if retry_after and retry_after > 0 else window_seconds,
+        }
+    )
+    return response, 429
 
 
 def _resolve_preview_site(token: str, settings: Settings) -> Path | None:

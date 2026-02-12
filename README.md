@@ -25,7 +25,7 @@ Sensitive data policy:
 1. Browser gets a session cookie from `/api/session`.
 2. User optionally connects GitHub via GitHub App user authorization.
 3. User configures one LLM provider/model at a time using a session-scoped API key.
-4. User submits a build job (brief + optional attachments).
+4. User submits a build job (title + app description).
 5. Worker generates files and stores a downloadable ZIP artifact.
 6. User can download the ZIP and/or trigger GitHub deployment from the same build.
 7. UI polls job status and event logs.
@@ -50,9 +50,7 @@ Sensitive data policy:
 - `GET /api/jobs/<job_id>/download`
 - `GET /preview/<token>/...`
 
-`POST /api/jobs` expects `multipart/form-data`:
-- `payload`: JSON string
-- `files`: zero or more attachments
+`POST /api/jobs` expects JSON:
 
 Payload schema:
 

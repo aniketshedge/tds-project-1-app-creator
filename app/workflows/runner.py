@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 import re
-import shutil
 import zipfile
 from pathlib import Path
 from uuid import uuid4
@@ -11,7 +10,7 @@ from dotenv import load_dotenv
 from redis import Redis
 
 from ..config import Settings
-from ..models import GitHubDeployPayload, JobCreatePayload, PromptAttachment, iso_now
+from ..models import GitHubDeployPayload, JobCreatePayload, iso_now
 from ..services.github import GitHubClient
 from ..services.generation import UnifiedGenerationService, default_model_for_provider
 from ..services.session_store import SessionStore
@@ -19,6 +18,7 @@ from ..services.workspace import WorkspaceManager
 from ..storage import TaskRepository
 
 logger = logging.getLogger(__name__)
+MAX_USER_ERROR_CHARS = 320
 
 
 def process_job(job_id: str) -> None:
@@ -39,25 +39,9 @@ def process_job(job_id: str) -> None:
     repository.append_event(job_id, "info", "Job started")
 
     workspace = WorkspaceManager(settings.workspace_root, job_id)
-    attachment_dir = Path(settings.attachment_root) / job_id
 
     try:
         job_payload = JobCreatePayload.model_validate(record.payload)
-        attachment_records = repository.list_attachments(job_id)
-        attachment_files: list[tuple[str, bytes]] = []
-        prompt_attachments: list[PromptAttachment] = []
-
-        for attachment in attachment_records:
-            file_path = attachment_dir / attachment.file_name
-            data = file_path.read_bytes()
-            attachment_files.append((attachment.file_name, data))
-            prompt_attachments.append(
-                PromptAttachment(
-                    file_name=attachment.file_name,
-                    media_type=attachment.media_type or "application/octet-stream",
-                    data=data,
-                )
-            )
 
         secrets = session_store.get_job_secrets(job_id)
         if not secrets:
@@ -75,10 +59,9 @@ def process_job(job_id: str) -> None:
             timeout=settings.request_timeout_seconds,
             max_retries=settings.max_retries,
         )
-        manifest = llm.generate_manifest(job_payload.brief, prompt_attachments)
+        manifest = llm.generate_manifest(job_payload.brief)
 
         workspace.write_manifest(manifest)
-        workspace.write_attachment_files(attachment_files)
 
         if manifest.commands and settings.allow_manifest_commands:
             repository.append_event(job_id, "info", "Running manifest commands")
@@ -99,20 +82,19 @@ def process_job(job_id: str) -> None:
 
     except Exception as exc:
         logger.exception("Job %s failed: %s", job_id, exc)
+        safe_error = _sanitize_worker_error(exc, "Build failed while generating app files.")
         repository.update_job(
             job_id,
             status="failed",
             error_code="job_failed",
-            error_message=str(exc),
+            error_message=safe_error,
             completed_at=iso_now(),
         )
-        repository.append_event(job_id, "error", f"Job failed: {exc}")
+        repository.append_event(job_id, "error", f"Job failed: {safe_error}")
         raise
     finally:
         session_store.clear_job_secrets(job_id)
         workspace.cleanup()
-        if attachment_dir.exists():
-            shutil.rmtree(attachment_dir)
 
 
 def deploy_job_artifact(job_id: str, deploy_payload_data: dict, secret_ref: str) -> None:
@@ -186,14 +168,15 @@ def deploy_job_artifact(job_id: str, deploy_payload_data: dict, secret_ref: str)
         repository.append_event(job_id, "info", "GitHub deployment completed")
     except Exception as exc:
         logger.exception("GitHub deployment failed for job %s: %s", job_id, exc)
+        safe_error = _sanitize_worker_error(exc, "Deployment failed while publishing to GitHub.")
         repository.update_job(
             job_id,
             status="deploy_failed",
             error_code="deploy_failed",
-            error_message=str(exc),
+            error_message=safe_error,
             completed_at=iso_now(),
         )
-        repository.append_event(job_id, "error", f"GitHub deployment failed: {exc}")
+        repository.append_event(job_id, "error", f"GitHub deployment failed: {safe_error}")
         raise
     finally:
         session_store.clear_job_secrets(secret_ref)
@@ -238,3 +221,22 @@ def _resolve_artifact_path(artifact_path: str | None, package_root: str) -> Path
         logger.warning("Blocked artifact access outside package root: %s", resolved_artifact)
         return None
     return resolved_artifact
+
+
+def _sanitize_worker_error(exc: Exception, fallback: str) -> str:
+    message = str(exc or "").strip()
+    if not message:
+        return fallback
+
+    redacted = re.sub(
+        r"https://x-access-token:[^@]+@github\.com",
+        "https://x-access-token:[REDACTED]@github.com",
+        message,
+    )
+    redacted = re.sub(r"\b(gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+)\b", "[REDACTED]", redacted)
+    redacted = re.sub(r"\b(sk|pplx)-[A-Za-z0-9._-]+\b", "[REDACTED]", redacted)
+    redacted = " ".join(redacted.split())
+
+    if len(redacted) > MAX_USER_ERROR_CHARS:
+        redacted = redacted[:MAX_USER_ERROR_CHARS].rstrip() + "..."
+    return redacted
