@@ -75,6 +75,7 @@ const deployModal = reactive({
 const previewPrompt = reactive({
   visible: false,
   error: "",
+  previewUrl: "",
 });
 
 const buildInFlightStatuses = new Set(["queued", "in_progress", "deploying"]);
@@ -338,11 +339,13 @@ function openPreviewPrompt() {
   }
   previewPrompt.visible = true;
   previewPrompt.error = "";
+  previewPrompt.previewUrl = "";
 }
 
 function closePreviewPrompt() {
   previewPrompt.visible = false;
   previewPrompt.error = "";
+  previewPrompt.previewUrl = "";
 }
 
 function appendBuildModalEvents(newEvents) {
@@ -591,16 +594,9 @@ async function deploySelectedJob() {
   }
 }
 
-async function confirmPreviewOpen() {
+async function preparePreview() {
   if (!selectedJobId.value) {
     return;
-  }
-
-  let previewTab = null;
-  try {
-    previewTab = window.open("about:blank", "_blank", "noopener");
-  } catch {
-    previewTab = null;
   }
 
   busy.creatingPreview = true;
@@ -613,17 +609,8 @@ async function confirmPreviewOpen() {
     if (!previewUrl) {
       throw new Error("Preview URL missing from server response");
     }
-
-    if (previewTab && !previewTab.closed) {
-      previewTab.location.href = previewUrl;
-    } else {
-      window.open(previewUrl, "_blank", "noopener");
-    }
-    closePreviewPrompt();
+    previewPrompt.previewUrl = previewUrl;
   } catch (error) {
-    if (previewTab && !previewTab.closed) {
-      previewTab.close();
-    }
     previewPrompt.error = `Failed to create preview: ${error.message}`;
   } finally {
     busy.creatingPreview = false;
@@ -785,9 +772,8 @@ onBeforeUnmount(() => {
   <div class="shell">
     <header class="hero">
       <div>
-        <p class="eyebrow">Self-Hosted Builder</p>
-        <h1>App Creator Console</h1>
-        <p class="subtext">Generate app files once, then download or deploy when you are ready.</p>
+        <h1>App Creator</h1>
+        <p class="subtext">Choose your AI service, describe your single-page app, and build it in minutes.</p>
       </div>
       <div class="session-card">
         <p class="label">Session ID</p>
@@ -896,7 +882,7 @@ onBeforeUnmount(() => {
           <div class="delivery-actions">
             <p>
               <strong>Download:</strong>
-              <a v-if="canDownloadSelectedJob" :href="selectedJob.download_url">Download ZIP package</a>
+              <a v-if="canDownloadSelectedJob" class="inline-link" :href="selectedJob.download_url">Download ZIP package</a>
               <span v-else>Available after build completes.</span>
             </p>
             <button class="ghost" type="button" :disabled="!canDownloadSelectedJob" @click="openPreviewPrompt">
@@ -908,11 +894,17 @@ onBeforeUnmount(() => {
             <p><strong>Deployment complete.</strong></p>
             <p>
               <strong>Repository:</strong>
-              <a :href="selectedJob.repo_url" target="_blank">{{ selectedJob.repo_url }}</a>
+              <a class="inline-link" :href="selectedJob.repo_url" target="_blank">{{ selectedJob.repo_url }}</a>
             </p>
             <p>
               <strong>Pages:</strong>
-              <a v-if="selectedPagesUrl" :href="selectedPagesUrl" target="_blank" :title="pagesLinkHoverTitle">
+              <a
+                v-if="selectedPagesUrl"
+                class="inline-link"
+                :href="selectedPagesUrl"
+                target="_blank"
+                :title="pagesLinkHoverTitle"
+              >
                 {{ selectedPagesUrl }}{{ isSelectedPagesUrlEstimated ? " (estimated)" : "" }}
               </a>
               <span v-else>-</span>
@@ -1017,12 +1009,20 @@ onBeforeUnmount(() => {
             <p><strong>Artifact:</strong> {{ selectedJob.artifact_name || "-" }}</p>
             <p>
               <strong>Repo:</strong>
-              <a v-if="selectedJob.repo_url" :href="selectedJob.repo_url" target="_blank">{{ selectedJob.repo_url }}</a>
+              <a v-if="selectedJob.repo_url" class="inline-link" :href="selectedJob.repo_url" target="_blank">
+                {{ selectedJob.repo_url }}
+              </a>
               <span v-else>-</span>
             </p>
             <p>
               <strong>Pages:</strong>
-              <a v-if="selectedPagesUrl" :href="selectedPagesUrl" target="_blank" :title="pagesLinkHoverTitle">
+              <a
+                v-if="selectedPagesUrl"
+                class="inline-link"
+                :href="selectedPagesUrl"
+                target="_blank"
+                :title="pagesLinkHoverTitle"
+              >
                 {{ selectedPagesUrl }}{{ isSelectedPagesUrlEstimated ? " (estimated)" : "" }}
               </a>
               <span v-else>-</span>
@@ -1040,6 +1040,10 @@ onBeforeUnmount(() => {
         </details>
       </aside>
     </div>
+
+    <footer class="footer-bar">
+      <p class="footer-note">Created and hosted by Aniket Shedge</p>
+    </footer>
   </div>
 
   <div v-if="buildModal.visible" class="build-overlay">
@@ -1079,11 +1083,31 @@ onBeforeUnmount(() => {
       </p>
       <p v-if="previewPrompt.error" class="error">{{ previewPrompt.error }}</p>
       <div class="preview-actions">
-        <button class="ghost" type="button" :disabled="busy.creatingPreview" @click="closePreviewPrompt">
-          Cancel
+        <button
+          v-if="!previewPrompt.previewUrl"
+          type="button"
+          :disabled="busy.creatingPreview"
+          @click="preparePreview"
+        >
+          {{ busy.creatingPreview ? "Preparing..." : "OK" }}
         </button>
-        <button type="button" :disabled="busy.creatingPreview" @click="confirmPreviewOpen">
-          {{ busy.creatingPreview ? "Preparing..." : "OK, open preview" }}
+        <a
+          v-else
+          class="popup-link-button"
+          :href="previewPrompt.previewUrl"
+          target="_blank"
+          rel="noopener"
+          @click="closePreviewPrompt"
+        >
+          OK, open preview
+        </a>
+        <button
+          v-if="previewPrompt.error && !busy.creatingPreview"
+          class="ghost"
+          type="button"
+          @click="closePreviewPrompt"
+        >
+          Close
         </button>
       </div>
     </div>
