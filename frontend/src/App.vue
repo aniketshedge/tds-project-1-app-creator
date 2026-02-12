@@ -163,9 +163,19 @@ function syncSelectedJobSelection() {
     return;
   }
 
+  if (!selectedJobId.value) {
+    selectedJob.value = null;
+    events.value = [];
+    nextAfter.value = 0;
+    return;
+  }
+
   const stillPresent = jobs.value.some((job) => job.job_id === selectedJobId.value);
   if (!stillPresent) {
-    selectedJobId.value = jobs.value[0].job_id;
+    selectedJobId.value = "";
+    selectedJob.value = null;
+    events.value = [];
+    nextAfter.value = 0;
   }
 }
 
