@@ -10,7 +10,8 @@ from ..models import Manifest
 logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = (
-    "You generate production-ready static web apps. "
+    "You generate production-ready static web apps that are directly deployable. "
+    "Never require server-side runtime, package installation, or build commands. "
     "Always respond with strict JSON that matches the requested schema."
 )
 
@@ -272,10 +273,15 @@ Requirements:
     }}
   ],
   "readme": "optional README.md content",
-  "commands": ["optional shell command to run before deployment"]
+  "commands": []
 }}
-- Output must run as a static site on GitHub Pages.
-- Use browser-safe JavaScript only. Do not use server runtime APIs (`require`, `module.exports`, `process`, `fs`).
+- Output must run as a static site on GitHub Pages without any build step.
+- Include an `index.html` entry point and all required static assets in `files`.
+- `commands` must always be an empty array because shell/build execution is disabled.
+- Do not assume `npm`, `pnpm`, `yarn`, `vite`, `webpack`, or any CI/CD step will run after generation.
+- Use browser-safe JavaScript only. Do not use server/runtime APIs (`require`, `module.exports`, `process`, `fs`, `path`).
+- Do not depend on environment variables or backend-only secrets.
 - Keep code and README concise, clear, and maintainable.
 - Include a LICENSE file only if one is not already present.
+- If the brief is ambiguous, prefer a simple vanilla HTML/CSS/JS implementation that works immediately.
 """.strip()
