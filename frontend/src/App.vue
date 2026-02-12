@@ -24,7 +24,7 @@ const busy = reactive({
 
 const flash = ref("");
 const llmConfigExpanded = ref(true);
-const showActiveOnlyJobs = ref(false);
+const deployToGithub = ref(false);
 
 const llmForm = reactive({
   provider: "perplexity",
@@ -48,10 +48,28 @@ const deployForm = reactive({
 const attachmentFiles = ref([]);
 const pollHandle = ref(null);
 
-const ACTIVE_JOB_STATUSES = new Set(["queued", "in_progress", "deploying"]);
+const panelState = reactive({
+  step1: true,
+  step2: true,
+  step3: true,
+  history: false,
+});
+
+const isCompactScreen = ref(false);
+const buildModal = reactive({
+  visible: false,
+  jobId: "",
+  failed: false,
+  error: "",
+  lines: [],
+});
+
+const buildInFlightStatuses = new Set(["queued", "in_progress", "deploying"]);
 const pagesLinkHoverTitle = "GitHub Pages can take a few minutes to become live after deployment.";
 
-const canCreateJob = computed(() => integrations.value.llm.configured);
+const canCreateJob = computed(() => integrations.value.llm.configured && !buildModal.visible);
+const hasSavedLlmConfig = computed(() => integrations.value.llm.configured);
+const canDownloadSelectedJob = computed(() => Boolean(selectedJob.value?.download_url));
 const canDeploySelectedJob = computed(() => {
   if (!selectedJob.value || !selectedJob.value.download_url) {
     return false;
@@ -62,21 +80,49 @@ const canDeploySelectedJob = computed(() => {
   if (!deployForm.repoName.trim()) {
     return false;
   }
-  return !busy.deployingJob && !["queued", "in_progress", "deploying"].includes(selectedJob.value.status);
+  if (buildInFlightStatuses.has(selectedJob.value.status)) {
+    return false;
+  }
+  return !busy.deployingJob && !buildModal.visible;
 });
-const hasSavedLlmConfig = computed(() => integrations.value.llm.configured);
 const selectedPagesUrl = computed(() => buildPagesUrl(selectedJob.value));
 const isSelectedPagesUrlEstimated = computed(
   () => Boolean(selectedJob.value && !selectedJob.value.pages_url && selectedPagesUrl.value)
 );
-const displayedJobs = computed(() =>
-  showActiveOnlyJobs.value
-    ? jobs.value.filter((job) => ACTIVE_JOB_STATUSES.has(job.status))
-    : jobs.value
-);
-const hiddenJobCount = computed(() =>
-  showActiveOnlyJobs.value ? Math.max(jobs.value.length - displayedJobs.value.length, 0) : 0
-);
+const recentEvents = computed(() => events.value.slice(-200));
+
+function onPanelToggle(key, event) {
+  panelState[key] = event.target.open;
+}
+
+function applyResponsivePanelDefaults(force = false) {
+  const compact = window.innerWidth <= 920;
+  if (!force && compact === isCompactScreen.value) {
+    return;
+  }
+
+  isCompactScreen.value = compact;
+  if (compact) {
+    panelState.step1 = true;
+    panelState.step2 = false;
+    panelState.step3 = false;
+    if (force) {
+      panelState.history = false;
+    }
+    return;
+  }
+
+  panelState.step1 = true;
+  panelState.step2 = true;
+  panelState.step3 = true;
+  if (force) {
+    panelState.history = false;
+  }
+}
+
+function handleResize() {
+  applyResponsivePanelDefaults(false);
+}
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -108,16 +154,18 @@ function dedupeJobs(jobList) {
   return uniqueJobs;
 }
 
-function syncSelectedJobWithFilters() {
-  if (!selectedJobId.value) {
-    return;
-  }
-  const stillVisible = displayedJobs.value.some((job) => job.job_id === selectedJobId.value);
-  if (!stillVisible) {
+function syncSelectedJobSelection() {
+  if (jobs.value.length === 0) {
     selectedJobId.value = "";
     selectedJob.value = null;
     events.value = [];
     nextAfter.value = 0;
+    return;
+  }
+
+  const stillPresent = jobs.value.some((job) => job.job_id === selectedJobId.value);
+  if (!stillPresent) {
+    selectedJobId.value = jobs.value[0].job_id;
   }
 }
 
@@ -130,6 +178,53 @@ function syncDeployFormFromSelectedJob() {
   }
   if (selectedJob.value.repo_visibility) {
     deployForm.visibility = selectedJob.value.repo_visibility;
+  }
+}
+
+function openBuildModal(jobId) {
+  buildModal.visible = true;
+  buildModal.jobId = jobId;
+  buildModal.failed = false;
+  buildModal.error = "";
+  buildModal.lines = ["> Build accepted. Waiting for worker..."];
+}
+
+function closeBuildModal() {
+  buildModal.visible = false;
+  buildModal.jobId = "";
+  buildModal.failed = false;
+  buildModal.error = "";
+  buildModal.lines = [];
+}
+
+function appendBuildModalEvents(newEvents) {
+  if (!buildModal.visible || !selectedJob.value || buildModal.jobId !== selectedJob.value.job_id) {
+    return;
+  }
+
+  for (const event of newEvents) {
+    buildModal.lines.push(`> ${event.message}`);
+  }
+
+  if (buildModal.lines.length > 80) {
+    buildModal.lines = buildModal.lines.slice(-80);
+  }
+}
+
+function updateBuildModalStatus() {
+  if (!buildModal.visible || !selectedJob.value || buildModal.jobId !== selectedJob.value.job_id) {
+    return;
+  }
+
+  if (selectedJob.value.status === "failed") {
+    buildModal.failed = true;
+    buildModal.error = selectedJob.value.error_message || "Build failed.";
+    return;
+  }
+
+  if (selectedJob.value.status === "completed") {
+    closeBuildModal();
+    flash.value = "Build complete. Continue to Step 3 to download or deploy.";
   }
 }
 
@@ -146,9 +241,9 @@ async function bootstrap() {
 
     const jobResponse = await api("/api/jobs");
     jobs.value = dedupeJobs(jobResponse.jobs);
+    syncSelectedJobSelection();
 
-    if (displayedJobs.value.length > 0) {
-      selectedJobId.value = displayedJobs.value[0].job_id;
+    if (selectedJobId.value) {
       await refreshSelectedJob();
       syncDeployFormFromSelectedJob();
     }
@@ -261,14 +356,18 @@ async function createJob() {
       body: formData,
     });
 
+    selectedJobId.value = result.job_id;
+    events.value = [];
+    nextAfter.value = 0;
+    openBuildModal(result.job_id);
+
     const jobResponse = await api("/api/jobs");
     jobs.value = dedupeJobs(jobResponse.jobs);
-    selectedJobId.value = result.job_id;
     await refreshSelectedJob();
     syncDeployFormFromSelectedJob();
-    flash.value = `Build job ${result.job_id} queued.`;
   } catch (error) {
-    flash.value = `Failed to create job: ${error.message}`;
+    closeBuildModal();
+    flash.value = `Failed to create build: ${error.message}`;
   } finally {
     busy.creatingJob = false;
   }
@@ -313,19 +412,10 @@ async function refreshJobs() {
   try {
     const jobResponse = await api("/api/jobs");
     jobs.value = dedupeJobs(jobResponse.jobs);
-    syncSelectedJobWithFilters();
+    syncSelectedJobSelection();
   } catch (error) {
     flash.value = `Failed to refresh jobs: ${error.message}`;
   }
-}
-
-async function refreshJobsPanel() {
-  jobs.value = [];
-  selectedJobId.value = "";
-  selectedJob.value = null;
-  events.value = [];
-  nextAfter.value = 0;
-  await refreshJobs();
 }
 
 async function refreshSelectedJob() {
@@ -341,11 +431,13 @@ async function refreshSelectedJob() {
     const eventResult = await api(`/api/jobs/${selectedJobId.value}/events?after=${nextAfter.value}`);
     if (eventResult.events.length > 0) {
       events.value = [...events.value, ...eventResult.events];
-      if (events.value.length > 200) {
-        events.value = events.value.slice(-200);
+      if (events.value.length > 400) {
+        events.value = events.value.slice(-400);
       }
+      appendBuildModalEvents(eventResult.events);
       nextAfter.value = eventResult.next_after;
     }
+    updateBuildModalStatus();
   } catch (error) {
     flash.value = `Failed to refresh selected job: ${error.message}`;
   }
@@ -389,11 +481,6 @@ function buildPagesUrl(job) {
   return `https://${parts[0]}.github.io/${parts[1]}/`;
 }
 
-function toggleJobFilter() {
-  showActiveOnlyJobs.value = !showActiveOnlyJobs.value;
-  syncSelectedJobWithFilters();
-}
-
 async function resetSession() {
   busy.resettingSession = true;
   flash.value = "";
@@ -405,11 +492,13 @@ async function resetSession() {
     events.value = [];
     nextAfter.value = 0;
     llmForm.api_key = "";
+    deployToGithub.value = false;
     deployForm.repoName = "";
     deployForm.visibility = "public";
     deployForm.enablePages = true;
     deployForm.branch = "main";
     deployForm.deployPath = "/";
+    closeBuildModal();
     await refreshIntegrations();
     llmConfigExpanded.value = true;
     flash.value = "Session reset complete. Integrations and pending state were cleared.";
@@ -424,13 +513,10 @@ watch(selectedJobId, async (newValue, oldValue) => {
   if (newValue !== oldValue) {
     events.value = [];
     nextAfter.value = 0;
+    deployToGithub.value = false;
     await refreshSelectedJob();
     syncDeployFormFromSelectedJob();
   }
-});
-
-watch(showActiveOnlyJobs, () => {
-  syncSelectedJobWithFilters();
 });
 
 watch(
@@ -453,12 +539,16 @@ onMounted(async () => {
     window.history.replaceState({}, "", window.location.pathname);
   }
 
+  applyResponsivePanelDefaults(true);
+  window.addEventListener("resize", handleResize);
+
   await bootstrap();
   startPolling();
 });
 
 onBeforeUnmount(() => {
   stopPolling();
+  window.removeEventListener("resize", handleResize);
 });
 </script>
 
@@ -468,14 +558,12 @@ onBeforeUnmount(() => {
       <div>
         <p class="eyebrow">Self-Hosted Builder</p>
         <h1>App Creator Console</h1>
-        <p class="subtext">
-          Generate app files once, then deliver them as ZIP and/or deploy them to GitHub.
-        </p>
+        <p class="subtext">Generate app files once, then download or deploy when you are ready.</p>
       </div>
       <div class="session-card">
         <p class="label">Session ID</p>
         <code>{{ session?.session_id || "loading" }}</code>
-        <button class="ghost" :disabled="busy.resettingSession" @click="resetSession">
+        <button class="ghost" :disabled="busy.resettingSession || buildModal.visible" @click="resetSession">
           {{ busy.resettingSession ? "Resetting..." : "Reset Session" }}
         </button>
       </div>
@@ -483,28 +571,12 @@ onBeforeUnmount(() => {
 
     <p v-if="flash" class="flash">{{ flash }}</p>
 
-    <main class="grid">
-      <section class="panel">
-        <h2>Integrations</h2>
-
-        <div class="integration-row">
-          <div>
-            <h3>GitHub App</h3>
-            <p v-if="integrations.github.connected">
-              Connected as <strong>{{ integrations.github.username }}</strong>
-            </p>
-            <p v-else>Not connected</p>
-          </div>
-          <div class="row-actions">
-            <template v-if="!integrations.github.connected">
-              <button class="ghost" :disabled="busy.githubAuthFlow" @click="installGithubApp">
-                Install App
-              </button>
-              <button :disabled="busy.githubAuthFlow" @click="startGithubAuth">Connect GitHub</button>
-            </template>
-            <button v-else class="ghost" @click="disconnectGithub">Disconnect</button>
-          </div>
-        </div>
+    <main class="step-stack">
+      <details class="panel step-panel" :open="panelState.step1" @toggle="onPanelToggle('step1', $event)">
+        <summary class="step-summary">
+          <span class="step-index">Step 1</span>
+          <h2>Choose LLM provider</h2>
+        </summary>
 
         <div class="stack llm-section">
           <div class="llm-head">
@@ -538,16 +610,18 @@ onBeforeUnmount(() => {
               Model
               <input v-model="llmForm.model" type="text" placeholder="sonar-pro" />
             </label>
-            <button :disabled="busy.savingLlm">{{ busy.savingLlm ? "Saving..." : "Save LLM Config" }}</button>
+            <button :disabled="busy.savingLlm || buildModal.visible">
+              {{ busy.savingLlm ? "Saving..." : "Save LLM Config" }}
+            </button>
           </form>
         </div>
-      </section>
+      </details>
 
-      <section class="panel">
-        <h2>Create Build</h2>
-        <p class="hint create-hint">
-          This generates project files once. After completion, both ZIP download and GitHub deploy are available.
-        </p>
+      <details class="panel step-panel" :open="panelState.step2" @toggle="onPanelToggle('step2', $event)">
+        <summary class="step-summary">
+          <span class="step-index">Step 2</span>
+          <h2>Build your app</h2>
+        </summary>
 
         <form class="stack" @submit.prevent="createJob">
           <label>
@@ -556,7 +630,7 @@ onBeforeUnmount(() => {
           </label>
 
           <label>
-            Brief
+            Describe your application
             <textarea v-model="jobForm.brief" rows="7" required></textarea>
           </label>
 
@@ -566,128 +640,163 @@ onBeforeUnmount(() => {
           </label>
 
           <button :disabled="!canCreateJob || busy.creatingJob || busy.bootstrap">
-            {{ busy.creatingJob ? "Submitting..." : "Generate Project Files" }}
+            {{ busy.creatingJob ? "Submitting..." : "Build your app" }}
           </button>
         </form>
-      </section>
+      </details>
 
-      <section class="panel">
-        <div class="jobs-head">
-          <h2>Jobs</h2>
-          <div class="jobs-actions">
-            <button class="ghost" type="button" @click="toggleJobFilter">
-              {{ showActiveOnlyJobs ? "Show All" : "Show Active Only" }}
-            </button>
-            <button class="ghost" type="button" @click="refreshJobsPanel">Refresh</button>
-          </div>
+      <details class="panel step-panel" :open="panelState.step3" @toggle="onPanelToggle('step3', $event)">
+        <summary class="step-summary">
+          <span class="step-index">Step 3</span>
+          <h2>Get your app!</h2>
+        </summary>
+
+        <div v-if="!selectedJob" class="stack">
+          <p class="hint">Create a build in Step 2 first. Delivery options will appear here.</p>
         </div>
 
-        <p v-if="hiddenJobCount > 0" class="hint">
-          Showing active jobs only. {{ hiddenJobCount }} completed/failed job(s) hidden.
-        </p>
-
-        <div class="jobs-list">
-          <button
-            v-for="job in displayedJobs"
-            :key="job.job_id"
-            class="job-pill"
-            :class="{ selected: selectedJobId === job.job_id }"
-            @click="selectedJobId = job.job_id"
-          >
-            <span>{{ job.title }}</span>
-            <strong>{{ job.status }}</strong>
-          </button>
-          <p v-if="displayedJobs.length === 0">No jobs in current filter.</p>
-        </div>
-
-        <div v-if="selectedJob" class="job-detail">
-          <h3>Selected Job</h3>
-          <p><strong>ID:</strong> {{ selectedJob.job_id }}</p>
-          <p><strong>Status:</strong> {{ selectedJob.status }}</p>
-          <p><strong>Artifact:</strong> {{ selectedJob.artifact_name || "pending" }}</p>
+        <div v-else class="stack">
           <p>
-            <strong>Repo:</strong>
-            <a v-if="selectedJob.repo_url" :href="selectedJob.repo_url" target="_blank">{{ selectedJob.repo_url }}</a>
-            <span v-else>-</span>
+            <strong>Selected build:</strong>
+            {{ selectedJob.title }} ({{ selectedJob.status }})
           </p>
+
           <p>
-            <strong>Pages:</strong>
-            <a v-if="selectedPagesUrl" :href="selectedPagesUrl" target="_blank" :title="pagesLinkHoverTitle">
-              {{ selectedPagesUrl }}{{ isSelectedPagesUrlEstimated ? " (estimated)" : "" }}
-            </a>
-            <span v-else>-</span>
+            <strong>Download:</strong>
+            <a v-if="canDownloadSelectedJob" :href="selectedJob.download_url">Download ZIP package</a>
+            <span v-else>Available after build completes.</span>
           </p>
-          <p><strong>Commit:</strong> <code>{{ selectedJob.commit_sha || "-" }}</code></p>
 
-          <div class="delivery-box stack">
-            <h4>Delivery</h4>
-            <p>
-              <strong>ZIP:</strong>
-              <a v-if="selectedJob.download_url" :href="selectedJob.download_url">Download ZIP package</a>
-              <span v-else>Available after build completes.</span>
-            </p>
+          <label class="check-row deploy-choice">
+            <input v-model="deployToGithub" type="checkbox" :disabled="!canDownloadSelectedJob" />
+            Deploy this to my GitHub account
+          </label>
 
-            <div class="stack">
-              <h4>Deploy to GitHub</h4>
-              <p v-if="!integrations.github.connected" class="hint">
-                Connect GitHub in Integrations to deploy this build.
+          <div v-if="deployToGithub" class="stack delivery-box">
+            <div class="integration-row compact-row">
+              <div>
+                <h3>GitHub App</h3>
+                <p v-if="integrations.github.connected">
+                  Connected as <strong>{{ integrations.github.username }}</strong>
+                </p>
+                <p v-else>Not connected</p>
+              </div>
+              <div class="row-actions">
+                <template v-if="!integrations.github.connected">
+                  <button class="ghost" :disabled="busy.githubAuthFlow" @click="installGithubApp">Install App</button>
+                  <button :disabled="busy.githubAuthFlow" @click="startGithubAuth">Connect GitHub</button>
+                </template>
+                <button v-else class="ghost" @click="disconnectGithub">Disconnect</button>
+              </div>
+            </div>
+
+            <form v-if="integrations.github.connected" class="stack" @submit.prevent="deploySelectedJob">
+              <label>
+                GitHub Repository Name
+                <input v-model="deployForm.repoName" type="text" required />
+              </label>
+              <label>
+                Visibility
+                <select v-model="deployForm.visibility">
+                  <option value="public">Public</option>
+                  <option value="private">Private</option>
+                </select>
+              </label>
+
+              <p v-if="deployForm.visibility === 'private'" class="private-pages-note">
+                Private repositories may not support GitHub Pages on your current plan. Pages is disabled.
               </p>
 
-              <form v-else class="stack" @submit.prevent="deploySelectedJob">
+              <div class="split">
                 <label>
-                  GitHub Repository Name
-                  <input v-model="deployForm.repoName" type="text" required />
+                  Branch
+                  <input v-model="deployForm.branch" type="text" />
                 </label>
                 <label>
-                  Visibility
-                  <select v-model="deployForm.visibility">
-                    <option value="public">Public</option>
-                    <option value="private">Private</option>
-                  </select>
+                  Pages Path
+                  <input v-model="deployForm.deployPath" type="text" />
                 </label>
+              </div>
 
-                <p v-if="deployForm.visibility === 'private'" class="private-pages-note">
-                  Private repositories may not support GitHub Pages on your current plan. Pages is disabled.
-                </p>
+              <label class="check-row">
+                <input
+                  v-model="deployForm.enablePages"
+                  type="checkbox"
+                  :disabled="deployForm.visibility === 'private'"
+                />
+                Enable GitHub Pages after push
+              </label>
 
-                <div class="split">
-                  <label>
-                    Branch
-                    <input v-model="deployForm.branch" type="text" />
-                  </label>
-                  <label>
-                    Pages Path
-                    <input v-model="deployForm.deployPath" type="text" />
-                  </label>
-                </div>
-
-                <label class="check-row">
-                  <input
-                    v-model="deployForm.enablePages"
-                    type="checkbox"
-                    :disabled="deployForm.visibility === 'private'"
-                  />
-                  Enable GitHub Pages after push
-                </label>
-
-                <button :disabled="!canDeploySelectedJob">
-                  {{ busy.deployingJob ? "Deploying..." : "Deploy to GitHub" }}
-                </button>
-              </form>
-            </div>
+              <button :disabled="!canDeploySelectedJob">
+                {{ busy.deployingJob ? "Deploying..." : "Deploy to GitHub" }}
+              </button>
+            </form>
           </div>
-
-          <p v-if="selectedJob.error_message" class="error">{{ selectedJob.error_message }}</p>
-
-          <h4>Events</h4>
-          <ul class="events">
-            <li v-for="event in events" :key="event.id">
-              <time>{{ new Date(event.created_at).toLocaleTimeString() }}</time>
-              <span :class="event.level">{{ event.message }}</span>
-            </li>
-          </ul>
         </div>
-      </section>
+      </details>
     </main>
+
+    <details class="panel step-panel past-jobs" :open="panelState.history" @toggle="onPanelToggle('history', $event)">
+      <summary class="step-summary">
+        <span class="step-index">History</span>
+        <h2>Past jobs</h2>
+      </summary>
+
+      <div class="jobs-list">
+        <button
+          v-for="job in jobs"
+          :key="job.job_id"
+          class="job-pill"
+          :class="{ selected: selectedJobId === job.job_id }"
+          @click="selectedJobId = job.job_id"
+        >
+          <span>{{ job.title }}</span>
+          <strong>{{ job.status }}</strong>
+        </button>
+        <p v-if="jobs.length === 0">No jobs yet.</p>
+      </div>
+
+      <div v-if="selectedJob" class="job-detail">
+        <h3>Selected Job</h3>
+        <p><strong>ID:</strong> {{ selectedJob.job_id }}</p>
+        <p><strong>Status:</strong> {{ selectedJob.status }}</p>
+        <p><strong>Artifact:</strong> {{ selectedJob.artifact_name || "-" }}</p>
+        <p>
+          <strong>Repo:</strong>
+          <a v-if="selectedJob.repo_url" :href="selectedJob.repo_url" target="_blank">{{ selectedJob.repo_url }}</a>
+          <span v-else>-</span>
+        </p>
+        <p>
+          <strong>Pages:</strong>
+          <a v-if="selectedPagesUrl" :href="selectedPagesUrl" target="_blank" :title="pagesLinkHoverTitle">
+            {{ selectedPagesUrl }}{{ isSelectedPagesUrlEstimated ? " (estimated)" : "" }}
+          </a>
+          <span v-else>-</span>
+        </p>
+        <p><strong>Commit:</strong> <code>{{ selectedJob.commit_sha || "-" }}</code></p>
+        <p><strong>Error:</strong> {{ selectedJob.error_message || "-" }}</p>
+
+        <h4>Events</h4>
+        <ul class="events">
+          <li v-for="event in recentEvents" :key="event.id">
+            <span :class="event.level">{{ event.message }}</span>
+          </li>
+        </ul>
+      </div>
+    </details>
+  </div>
+
+  <div v-if="buildModal.visible" class="build-overlay">
+    <div class="build-popup">
+      <div class="build-head">
+        <div v-if="!buildModal.failed" class="spinner" aria-hidden="true"></div>
+        <h3>{{ buildModal.failed ? "Build failed" : "Building your app" }}</h3>
+      </div>
+
+      <pre class="build-log"><code>{{ buildModal.lines.join("\n") || "> waiting for worker output..." }}</code></pre>
+
+      <p v-if="buildModal.failed" class="error">{{ buildModal.error }}</p>
+      <button v-if="buildModal.failed" @click="closeBuildModal">Close</button>
+    </div>
   </div>
 </template>
