@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     workspace_root: str = "/tmp/task-runner"
     attachment_root: str = "./data/attachments"
     package_root: str = "./data/packages"
+    preview_root: str = "./data/previews"
     frontend_dist: str = "./frontend/dist"
 
     # Logging
@@ -42,6 +43,7 @@ class Settings(BaseSettings):
     attachment_max_bytes: int = 5_242_880  # 5 MB
     job_secret_ttl_seconds: int = 7_200
     allow_manifest_commands: bool = False
+    preview_ttl_seconds: int = 3_600
 
     # Defaults
     perplexity_default_model: str = "sonar-pro"
@@ -54,6 +56,7 @@ class Settings(BaseSettings):
         workspace = Path(self.workspace_root).expanduser().resolve()
         attach_root = Path(self.attachment_root).expanduser().resolve()
         package_root = Path(self.package_root).expanduser().resolve()
+        preview_root = Path(self.preview_root).expanduser().resolve()
         log_path = Path(self.log_file).expanduser().resolve()
         frontend_dist = Path(self.frontend_dist).expanduser().resolve()
 
@@ -61,11 +64,13 @@ class Settings(BaseSettings):
         self.workspace_root = str(workspace)
         self.attachment_root = str(attach_root)
         self.package_root = str(package_root)
+        self.preview_root = str(preview_root)
         self.log_file = str(log_path)
         self.frontend_dist = str(frontend_dist)
 
         workspace.mkdir(parents=True, exist_ok=True)
         attach_root.mkdir(parents=True, exist_ok=True)
         package_root.mkdir(parents=True, exist_ok=True)
+        preview_root.mkdir(parents=True, exist_ok=True)
         Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
         log_path.parent.mkdir(parents=True, exist_ok=True)

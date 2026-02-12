@@ -13,9 +13,11 @@ services:
       DATABASE_PATH: /app/data/tasks.db
       ATTACHMENT_ROOT: /app/data/attachments
       PACKAGE_ROOT: /app/data/packages
+      PREVIEW_ROOT: /app/data/previews
       WORKSPACE_ROOT: /tmp/task-runner
       FRONTEND_DIST: /app/frontend/dist
       SESSION_COOKIE_SECURE: "false"
+      PREVIEW_TTL_SECONDS: "3600"
     volumes:
       - app_data:/app/data
     restart: unless-stopped
@@ -33,9 +35,11 @@ services:
       DATABASE_PATH: /app/data/tasks.db
       ATTACHMENT_ROOT: /app/data/attachments
       PACKAGE_ROOT: /app/data/packages
+      PREVIEW_ROOT: /app/data/previews
       WORKSPACE_ROOT: /tmp/task-runner
       FRONTEND_DIST: /app/frontend/dist
       SESSION_COOKIE_SECURE: "false"
+      PREVIEW_TTL_SECONDS: "3600"
     volumes:
       - app_data:/app/data
     restart: unless-stopped

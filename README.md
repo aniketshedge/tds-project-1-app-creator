@@ -41,10 +41,12 @@ Sensitive data policy:
 - `POST /api/auth/github/disconnect`
 - `POST /api/jobs`
 - `POST /api/jobs/<job_id>/deploy`
+- `POST /api/jobs/<job_id>/preview`
 - `GET /api/jobs`
 - `GET /api/jobs/<job_id>`
 - `GET /api/jobs/<job_id>/events?after=<id>`
 - `GET /api/jobs/<job_id>/download`
+- `GET /preview/<token>/...`
 
 `POST /api/jobs` expects `multipart/form-data`:
 - `payload`: JSON string
@@ -74,6 +76,10 @@ Payload schema:
   }
 }
 ```
+
+`POST /api/jobs/<job_id>/preview` creates a static preview URL from the generated ZIP build.
+- Preview is static-file only (no server-side build/runtime execution)
+- Preview URL expires automatically after `PREVIEW_TTL_SECONDS` (default `3600`)
 
 ## Local Development
 

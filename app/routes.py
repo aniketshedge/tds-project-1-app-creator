@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import logging
+import shutil
+import zipfile
 from pathlib import Path
 from urllib.parse import urlencode
 from uuid import uuid4
@@ -417,6 +420,103 @@ def register_routes(app: Flask) -> None:
             _set_session_cookie(response, session_id, settings)
         return response
 
+    @app.post("/api/jobs/<job_id>/preview")
+    def create_job_preview(job_id: str) -> Response:
+        session_id, is_new = _get_or_create_session()
+        repository: TaskRepository = current_app.config["repository"]
+        settings: Settings = current_app.config["settings"]
+
+        job = repository.fetch_job(job_id)
+        if not job or job.session_id != session_id:
+            return jsonify({"error": "not_found"}), 404
+        artifact_path = _resolve_artifact_path(job, settings)
+        if artifact_path is None:
+            return jsonify({"error": "artifact_not_available"}), 404
+        if not artifact_path.exists() or not artifact_path.is_file():
+            return jsonify({"error": "artifact_not_found"}), 404
+
+        _cleanup_expired_previews(settings)
+
+        token = uuid4().hex
+        preview_root = Path(settings.preview_root).resolve()
+        preview_dir = preview_root / token
+        site_dir = preview_dir / "site"
+        site_dir.mkdir(parents=True, exist_ok=True)
+
+        try:
+            _extract_zip_archive(artifact_path, site_dir)
+        except Exception as exc:
+            logger.exception("Failed to extract preview archive for job %s: %s", job_id, exc)
+            shutil.rmtree(preview_dir, ignore_errors=True)
+            return (
+                jsonify(
+                    {
+                        "error": "preview_failed",
+                        "message": "Unable to prepare preview files for this build",
+                    }
+                ),
+                400,
+            )
+
+        if not (site_dir / "index.html").exists():
+            shutil.rmtree(preview_dir, ignore_errors=True)
+            return (
+                jsonify(
+                    {
+                        "error": "preview_not_available",
+                        "message": "Preview is available only for static builds containing index.html",
+                    }
+                ),
+                400,
+            )
+
+        expires_at = datetime.now(timezone.utc) + timedelta(seconds=settings.preview_ttl_seconds)
+        metadata = {
+            "session_id": session_id,
+            "job_id": job_id,
+            "expires_at": expires_at.isoformat(),
+        }
+        (preview_dir / "meta.json").write_text(json.dumps(metadata), encoding="utf-8")
+
+        response = jsonify(
+            {
+                "preview_url": f"/preview/{token}/",
+                "expires_at": expires_at.isoformat(),
+                "expires_in_seconds": settings.preview_ttl_seconds,
+            }
+        )
+        if is_new:
+            _set_session_cookie(response, session_id, settings)
+        return response
+
+    @app.get("/preview/<token>")
+    def serve_preview_root(token: str) -> Response:
+        return redirect(f"/preview/{token}/")
+
+    @app.get("/preview/<token>/")
+    @app.get("/preview/<token>/<path:asset_path>")
+    def serve_preview_asset(token: str, asset_path: str = "index.html"):
+        settings: Settings = current_app.config["settings"]
+        _cleanup_expired_previews(settings)
+
+        site_dir = _resolve_preview_site(token, settings)
+        if site_dir is None:
+            return jsonify({"error": "preview_not_found"}), 404
+
+        target = (site_dir / asset_path).resolve()
+        try:
+            target.relative_to(site_dir)
+        except ValueError:
+            return jsonify({"error": "invalid_preview_path"}), 400
+
+        if target.exists() and target.is_file():
+            return send_from_directory(str(site_dir), asset_path)
+
+        index_file = site_dir / "index.html"
+        if index_file.exists():
+            return send_from_directory(str(site_dir), "index.html")
+        return jsonify({"error": "preview_not_found"}), 404
+
     @app.get("/")
     def serve_index() -> Response:
         static_root = current_app.static_folder
@@ -517,6 +617,93 @@ def _resolve_artifact_path(job, settings: Settings) -> Path | None:
         logger.warning("Blocked artifact access outside package root: %s", artifact_path)
         return None
     return artifact_path
+
+
+def _extract_zip_archive(artifact_path: Path, target_dir: Path) -> None:
+    with zipfile.ZipFile(artifact_path, "r") as archive:
+        for member in archive.infolist():
+            member_path = (target_dir / member.filename).resolve()
+            try:
+                member_path.relative_to(target_dir)
+            except ValueError as exc:
+                raise RuntimeError(f"ZIP archive contains invalid path: {member.filename}") from exc
+        archive.extractall(target_dir)
+
+
+def _cleanup_expired_previews(settings: Settings) -> None:
+    preview_root = Path(settings.preview_root).resolve()
+    if not preview_root.exists():
+        return
+
+    now = datetime.now(timezone.utc)
+    for preview_dir in preview_root.iterdir():
+        if not preview_dir.is_dir():
+            continue
+
+        metadata = _read_preview_metadata(preview_dir)
+        if metadata is None:
+            shutil.rmtree(preview_dir, ignore_errors=True)
+            continue
+        expires_at = metadata.get("expires_at")
+        if not isinstance(expires_at, datetime) or expires_at <= now:
+            shutil.rmtree(preview_dir, ignore_errors=True)
+
+
+def _resolve_preview_site(token: str, settings: Settings) -> Path | None:
+    if not token or "/" in token or ".." in token:
+        return None
+
+    preview_root = Path(settings.preview_root).resolve()
+    preview_dir = (preview_root / token).resolve()
+    try:
+        preview_dir.relative_to(preview_root)
+    except ValueError:
+        return None
+    if not preview_dir.exists() or not preview_dir.is_dir():
+        return None
+
+    metadata = _read_preview_metadata(preview_dir)
+    if metadata is None:
+        shutil.rmtree(preview_dir, ignore_errors=True)
+        return None
+
+    expires_at = metadata.get("expires_at")
+    if not isinstance(expires_at, datetime) or expires_at <= datetime.now(timezone.utc):
+        shutil.rmtree(preview_dir, ignore_errors=True)
+        return None
+
+    site_dir = (preview_dir / "site").resolve()
+    try:
+        site_dir.relative_to(preview_dir)
+    except ValueError:
+        return None
+    if not site_dir.exists() or not site_dir.is_dir():
+        return None
+    return site_dir
+
+
+def _read_preview_metadata(preview_dir: Path) -> dict[str, object] | None:
+    metadata_file = preview_dir / "meta.json"
+    if not metadata_file.exists() or not metadata_file.is_file():
+        return None
+    try:
+        payload = json.loads(metadata_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+
+    raw_expiry = payload.get("expires_at")
+    if not isinstance(raw_expiry, str):
+        return None
+    try:
+        expires_at = datetime.fromisoformat(raw_expiry)
+    except ValueError:
+        return None
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    payload["expires_at"] = expires_at
+    return payload
 
 
 def _serialize_job(job) -> dict[str, object]:

@@ -18,6 +18,7 @@ const busy = reactive({
   savingLlm: false,
   creatingJob: false,
   deployingJob: false,
+  creatingPreview: false,
   resettingSession: false,
   githubAuthFlow: false,
 });
@@ -71,10 +72,16 @@ const deployModal = reactive({
   error: "",
   lines: [],
 });
+const previewPrompt = reactive({
+  visible: false,
+  error: "",
+});
 
 const buildInFlightStatuses = new Set(["queued", "in_progress", "deploying"]);
 const pagesLinkHoverTitle = "GitHub Pages can take a few minutes to become live after deployment.";
-const isAnyProgressModalVisible = computed(() => buildModal.visible || deployModal.visible);
+const isAnyProgressModalVisible = computed(
+  () => buildModal.visible || deployModal.visible || previewPrompt.visible
+);
 const hasCompletedDeployment = computed(() => Boolean(selectedJob.value?.repo_url || selectedJob.value?.commit_sha));
 
 const canCreateJob = computed(() => integrations.value.llm.configured && !isAnyProgressModalVisible.value);
@@ -325,6 +332,19 @@ function closeDeployModal() {
   deployModal.lines = [];
 }
 
+function openPreviewPrompt() {
+  if (!selectedJobId.value || !canDownloadSelectedJob.value || isAnyProgressModalVisible.value) {
+    return;
+  }
+  previewPrompt.visible = true;
+  previewPrompt.error = "";
+}
+
+function closePreviewPrompt() {
+  previewPrompt.visible = false;
+  previewPrompt.error = "";
+}
+
 function appendBuildModalEvents(newEvents) {
   if (!buildModal.visible || !selectedJob.value || buildModal.jobId !== selectedJob.value.job_id) {
     return;
@@ -571,6 +591,45 @@ async function deploySelectedJob() {
   }
 }
 
+async function confirmPreviewOpen() {
+  if (!selectedJobId.value) {
+    return;
+  }
+
+  let previewTab = null;
+  try {
+    previewTab = window.open("about:blank", "_blank", "noopener");
+  } catch {
+    previewTab = null;
+  }
+
+  busy.creatingPreview = true;
+  previewPrompt.error = "";
+  try {
+    const payload = await api(`/api/jobs/${selectedJobId.value}/preview`, {
+      method: "POST",
+    });
+    const previewUrl = payload.preview_url;
+    if (!previewUrl) {
+      throw new Error("Preview URL missing from server response");
+    }
+
+    if (previewTab && !previewTab.closed) {
+      previewTab.location.href = previewUrl;
+    } else {
+      window.open(previewUrl, "_blank", "noopener");
+    }
+    closePreviewPrompt();
+  } catch (error) {
+    if (previewTab && !previewTab.closed) {
+      previewTab.close();
+    }
+    previewPrompt.error = `Failed to create preview: ${error.message}`;
+  } finally {
+    busy.creatingPreview = false;
+  }
+}
+
 async function refreshJobs() {
   try {
     const jobResponse = await api("/api/jobs");
@@ -666,6 +725,7 @@ async function resetSession() {
     clearUiDraft();
     closeBuildModal();
     closeDeployModal();
+    closePreviewPrompt();
     await refreshIntegrations();
     llmConfigExpanded.value = true;
     flash.value = "Session reset complete. Integrations and pending state were cleared.";
@@ -833,11 +893,16 @@ onBeforeUnmount(() => {
             {{ selectedJob.title }} ({{ selectedJob.status }})
           </p>
 
-          <p>
-            <strong>Download:</strong>
-            <a v-if="canDownloadSelectedJob" :href="selectedJob.download_url">Download ZIP package</a>
-            <span v-else>Available after build completes.</span>
-          </p>
+          <div class="delivery-actions">
+            <p>
+              <strong>Download:</strong>
+              <a v-if="canDownloadSelectedJob" :href="selectedJob.download_url">Download ZIP package</a>
+              <span v-else>Available after build completes.</span>
+            </p>
+            <button class="ghost" type="button" :disabled="!canDownloadSelectedJob" @click="openPreviewPrompt">
+              Preview this app!
+            </button>
+          </div>
 
           <div v-if="hasCompletedDeployment" class="stack delivery-box">
             <p><strong>Deployment complete.</strong></p>
@@ -1002,6 +1067,25 @@ onBeforeUnmount(() => {
 
       <p v-if="deployModal.failed" class="error">{{ deployModal.error }}</p>
       <button v-if="deployModal.failed" @click="closeDeployModal">Close</button>
+    </div>
+  </div>
+
+  <div v-if="previewPrompt.visible" class="build-overlay">
+    <div class="build-popup preview-popup">
+      <h3>Preview this app?</h3>
+      <p>
+        This creates a temporary static preview on the server. It will stay live for
+        <strong>1 hour</strong> and then expire automatically.
+      </p>
+      <p v-if="previewPrompt.error" class="error">{{ previewPrompt.error }}</p>
+      <div class="preview-actions">
+        <button class="ghost" type="button" :disabled="busy.creatingPreview" @click="closePreviewPrompt">
+          Cancel
+        </button>
+        <button type="button" :disabled="busy.creatingPreview" @click="confirmPreviewOpen">
+          {{ busy.creatingPreview ? "Preparing..." : "OK, open preview" }}
+        </button>
+      </div>
     </div>
   </div>
 </template>

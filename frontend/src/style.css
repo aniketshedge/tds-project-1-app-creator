@@ -373,6 +373,14 @@ button.ghost {
   background: #f7f9ff;
 }
 
+.delivery-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
 .past-jobs {
   margin-top: 0;
 }
@@ -456,6 +464,17 @@ button.ghost {
   font-family: "IBM Plex Mono", monospace;
   font-size: 0.86rem;
   line-height: 1.45;
+}
+
+.preview-popup {
+  width: min(520px, 92vw);
+}
+
+.preview-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 @keyframes spin {
