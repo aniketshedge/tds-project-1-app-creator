@@ -38,7 +38,7 @@ class GitHubDeployPayload(BaseModel):
 
 
 class LLMIntegrationRequest(BaseModel):
-    provider: Literal["perplexity"]
+    provider: Literal["perplexity", "aipipe", "openai", "anthropic", "gemini"]
     api_key: str = Field(min_length=1)
     model: Optional[str] = None
 

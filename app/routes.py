@@ -29,6 +29,7 @@ from .services.github_app_auth import (
     exchange_code_for_user_token,
     fetch_user_profile,
 )
+from .services.generation import llm_provider_catalog, resolve_model_for_provider
 from .services.session_store import SessionStore
 from .storage import TaskRepository
 
@@ -93,6 +94,15 @@ def register_routes(app: Flask) -> None:
             _set_session_cookie(response, session_id, current_app.config["settings"])
         return response
 
+    @app.get("/api/integrations/llm/catalog")
+    def get_llm_catalog() -> Response:
+        session_id, is_new = _get_or_create_session()
+        settings: Settings = current_app.config["settings"]
+        response = jsonify({"providers": llm_provider_catalog()})
+        if is_new:
+            _set_session_cookie(response, session_id, settings)
+        return response
+
     @app.post("/api/integrations/llm")
     def configure_llm() -> Response:
         session_id, is_new = _get_or_create_session()
@@ -105,7 +115,10 @@ def register_routes(app: Flask) -> None:
         except ValidationError as exc:
             return jsonify({"error": "validation_error", "details": exc.errors()}), 400
 
-        llm_model = model.model or settings.perplexity_default_model
+        try:
+            llm_model = resolve_model_for_provider(model.provider, model.model)
+        except ValueError as exc:
+            return jsonify({"error": "validation_error", "message": str(exc)}), 400
         store.store_llm_credentials(
             session_id=session_id,
             provider=model.provider,

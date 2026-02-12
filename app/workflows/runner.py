@@ -13,7 +13,7 @@ from redis import Redis
 from ..config import Settings
 from ..models import GitHubDeployPayload, JobCreatePayload, PromptAttachment, iso_now
 from ..services.github import GitHubClient
-from ..services.perplexity import PerplexityClient
+from ..services.generation import UnifiedGenerationService, default_model_for_provider
 from ..services.session_store import SessionStore
 from ..services.workspace import WorkspaceManager
 from ..storage import TaskRepository
@@ -65,9 +65,11 @@ def process_job(job_id: str) -> None:
 
         llm_secret = secrets["llm"]
 
-        model = llm_secret.get("model") or settings.perplexity_default_model
+        provider = str(llm_secret["provider"])
+        model = llm_secret.get("model") or default_model_for_provider(provider)
         repository.append_event(job_id, "info", f"Generating app files with {llm_secret['provider']}")
-        llm = PerplexityClient(
+        llm = UnifiedGenerationService(
+            provider=provider,
             api_key=llm_secret["api_key"],
             model=model,
             timeout=settings.request_timeout_seconds,

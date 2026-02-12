@@ -7,6 +7,7 @@ Self-hosted service for generating and deploying static web apps from natural-la
 - Queue/session store: Redis
 - Job metadata: SQLite
 - Deployment target: user's own GitHub account + GitHub Pages
+- Supported LLM providers: Perplexity, AI Pipe, OpenAI, Anthropic, Gemini
 
 ## Architecture
 
@@ -23,7 +24,7 @@ Sensitive data policy:
 
 1. Browser gets a session cookie from `/api/session`.
 2. User optionally connects GitHub via GitHub App user authorization.
-3. User configures LLM provider (currently Perplexity) using an API key.
+3. User configures one LLM provider/model at a time using a session-scoped API key.
 4. User submits a build job (brief + optional attachments).
 5. Worker generates files and stores a downloadable ZIP artifact.
 6. User can download the ZIP and/or trigger GitHub deployment from the same build.
@@ -35,6 +36,7 @@ Sensitive data policy:
 - `GET /api/session`
 - `POST /api/session/reset`
 - `GET /api/integrations`
+- `GET /api/integrations/llm/catalog`
 - `POST /api/integrations/llm`
 - `GET /api/auth/github/start`
 - `GET /api/auth/github/callback`

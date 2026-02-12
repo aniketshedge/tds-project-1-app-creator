@@ -26,11 +26,59 @@ const busy = reactive({
 const flash = ref("");
 const llmConfigExpanded = ref(true);
 const deployToGithub = ref(false);
+const providerCatalog = ref([]);
+
+const OTHER_MODEL_VALUE = "__other__";
+const FALLBACK_LLM_CATALOG = [
+  {
+    id: "perplexity",
+    label: "Perplexity",
+    models: ["sonar", "sonar-pro", "sonar-reasoning-pro", "sonar-deep-research"],
+    allow_other: true,
+  },
+  {
+    id: "aipipe",
+    label: "AI Pipe",
+    models: [
+      "openai/gpt-4.1-mini",
+      "openai/gpt-4.1-nano",
+      "openai/gpt-4o-mini",
+      "anthropic/claude-3.5-sonnet",
+      "google/gemini-2.5-flash",
+    ],
+    allow_other: true,
+  },
+  {
+    id: "openai",
+    label: "OpenAI",
+    models: ["gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o", "gpt-4o-mini"],
+    allow_other: true,
+  },
+  {
+    id: "anthropic",
+    label: "Anthropic",
+    models: [
+      "claude-opus-4-1-20250805",
+      "claude-opus-4-20250514",
+      "claude-sonnet-4-20250514",
+      "claude-3-7-sonnet-20250219",
+      "claude-3-5-haiku-20241022",
+    ],
+    allow_other: true,
+  },
+  {
+    id: "gemini",
+    label: "Gemini",
+    models: ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash", "gemini-2.0-flash-lite"],
+    allow_other: true,
+  },
+];
 
 const llmForm = reactive({
   provider: "perplexity",
   api_key: "",
   model: "sonar-pro",
+  customModel: "",
 });
 
 const jobForm = reactive({
@@ -84,6 +132,18 @@ const isAnyProgressModalVisible = computed(
   () => buildModal.visible || deployModal.visible || previewPrompt.visible
 );
 const hasCompletedDeployment = computed(() => Boolean(selectedJob.value?.repo_url || selectedJob.value?.commit_sha));
+const llmProviders = computed(() =>
+  providerCatalog.value.length > 0 ? providerCatalog.value : FALLBACK_LLM_CATALOG
+);
+const selectedLlmProvider = computed(
+  () => llmProviders.value.find((provider) => provider.id === llmForm.provider) || llmProviders.value[0] || null
+);
+const selectedLlmProviderModels = computed(() => selectedLlmProvider.value?.models || []);
+const selectedLlmProviderAllowsOther = computed(() => selectedLlmProvider.value?.allow_other !== false);
+const isOtherModelSelected = computed(() => llmForm.model === OTHER_MODEL_VALUE);
+const resolvedLlmModel = computed(() =>
+  isOtherModelSelected.value ? llmForm.customModel.trim() : llmForm.model.trim()
+);
 
 const canCreateJob = computed(() => integrations.value.llm.configured && !isAnyProgressModalVisible.value);
 const hasSavedLlmConfig = computed(() => integrations.value.llm.configured);
@@ -111,6 +171,82 @@ const isSelectedPagesUrlEstimated = computed(
   () => Boolean(selectedJob.value && !selectedJob.value.pages_url && selectedPagesUrl.value)
 );
 const recentEvents = computed(() => events.value.slice(-200));
+
+function normalizeLlmCatalog(rawProviders) {
+  if (!Array.isArray(rawProviders)) {
+    return [];
+  }
+
+  const normalized = [];
+  for (const provider of rawProviders) {
+    if (!provider || typeof provider !== "object") {
+      continue;
+    }
+
+    const id = typeof provider.id === "string" ? provider.id.trim() : "";
+    if (!id) {
+      continue;
+    }
+
+    const label = typeof provider.label === "string" && provider.label.trim() ? provider.label.trim() : id;
+    const modelSet = new Set();
+    if (Array.isArray(provider.models)) {
+      for (const modelName of provider.models) {
+        if (typeof modelName !== "string") {
+          continue;
+        }
+        const cleaned = modelName.trim();
+        if (cleaned) {
+          modelSet.add(cleaned);
+        }
+      }
+    }
+
+    normalized.push({
+      id,
+      label,
+      models: [...modelSet],
+      allow_other: provider.allow_other !== false,
+    });
+  }
+
+  return normalized;
+}
+
+function setLlmProviderAndModel(providerId, persistedModel = "") {
+  if (llmProviders.value.length === 0) {
+    return;
+  }
+
+  const provider =
+    llmProviders.value.find((candidate) => candidate.id === providerId) || llmProviders.value[0];
+  llmForm.provider = provider.id;
+
+  const selectedModel = typeof persistedModel === "string" ? persistedModel.trim() : "";
+  if (selectedModel) {
+    if (provider.models.includes(selectedModel)) {
+      llmForm.model = selectedModel;
+      llmForm.customModel = "";
+      return;
+    }
+    if (provider.allow_other !== false) {
+      llmForm.model = OTHER_MODEL_VALUE;
+      llmForm.customModel = selectedModel;
+      return;
+    }
+  }
+
+  llmForm.model = provider.models[0] || OTHER_MODEL_VALUE;
+  llmForm.customModel = "";
+}
+
+function providerLabel(providerId) {
+  if (typeof providerId !== "string" || !providerId.trim()) {
+    return "Unknown provider";
+  }
+  const provider = llmProviders.value.find((candidate) => candidate.id === providerId);
+  return provider?.label || providerId;
+}
 
 function onPanelToggle(key, event) {
   panelState[key] = event.target.open;
@@ -411,16 +547,40 @@ function updateDeployModalStatus() {
   }
 }
 
+async function loadLlmCatalog() {
+  try {
+    const payload = await api("/api/integrations/llm/catalog");
+    const providers = normalizeLlmCatalog(payload?.providers);
+    if (providers.length > 0) {
+      providerCatalog.value = providers;
+      return;
+    }
+  } catch {
+    // fallback list is used when catalog request fails
+  }
+
+  providerCatalog.value = [];
+}
+
+function applyLlmStateFromIntegrations() {
+  const persistedProvider = integrations.value.llm.provider;
+  const persistedModel = integrations.value.llm.model;
+  setLlmProviderAndModel(persistedProvider || llmForm.provider, persistedModel || "");
+}
+
+function onLlmProviderChange() {
+  setLlmProviderAndModel(llmForm.provider, "");
+}
+
 async function bootstrap() {
   busy.bootstrap = true;
   try {
     session.value = await api("/api/session");
+    await loadLlmCatalog();
     integrations.value = await api("/api/integrations");
 
+    applyLlmStateFromIntegrations();
     llmConfigExpanded.value = !integrations.value.llm.configured;
-    if (integrations.value.llm.model) {
-      llmForm.model = integrations.value.llm.model;
-    }
 
     const jobResponse = await api("/api/jobs");
     jobs.value = dedupeJobs(jobResponse.jobs);
@@ -438,10 +598,11 @@ async function bootstrap() {
 }
 
 async function refreshIntegrations() {
-  integrations.value = await api("/api/integrations");
-  if (integrations.value.llm.model) {
-    llmForm.model = integrations.value.llm.model;
+  if (providerCatalog.value.length === 0) {
+    await loadLlmCatalog();
   }
+  integrations.value = await api("/api/integrations");
+  applyLlmStateFromIntegrations();
   if (!integrations.value.llm.configured) {
     llmConfigExpanded.value = true;
   }
@@ -492,6 +653,19 @@ async function disconnectGithub() {
 async function saveLlmConfig() {
   busy.savingLlm = true;
   flash.value = "";
+
+  if (isOtherModelSelected.value && !llmForm.customModel.trim()) {
+    flash.value = "Enter a model name when 'Other' is selected.";
+    busy.savingLlm = false;
+    return;
+  }
+
+  if (!resolvedLlmModel.value) {
+    flash.value = "Select a model before saving the LLM config.";
+    busy.savingLlm = false;
+    return;
+  }
+
   try {
     integrations.value = await api("/api/integrations/llm", {
       method: "POST",
@@ -499,9 +673,10 @@ async function saveLlmConfig() {
       body: JSON.stringify({
         provider: llmForm.provider,
         api_key: llmForm.api_key,
-        model: llmForm.model,
+        model: resolvedLlmModel.value,
       }),
     });
+    applyLlmStateFromIntegrations();
     llmForm.api_key = "";
     llmConfigExpanded.value = false;
     flash.value = "LLM provider configured for this session.";
@@ -703,6 +878,7 @@ async function resetSession() {
     events.value = [];
     nextAfter.value = 0;
     llmForm.api_key = "";
+    llmForm.customModel = "";
     deployToGithub.value = false;
     deployForm.repoName = "";
     deployForm.visibility = "public";
@@ -738,6 +914,15 @@ watch(
   (visibility) => {
     if (visibility === "private") {
       deployForm.enablePages = false;
+    }
+  }
+);
+
+watch(
+  () => llmForm.model,
+  (selectedModel) => {
+    if (selectedModel !== OTHER_MODEL_VALUE) {
+      llmForm.customModel = "";
     }
   }
 );
@@ -808,23 +993,39 @@ onBeforeUnmount(() => {
           </div>
 
           <p v-if="hasSavedLlmConfig && !llmConfigExpanded" class="hint">
-            Configured: <strong>{{ integrations.llm.provider }}</strong> ({{ integrations.llm.model }})
+            Configured: <strong>{{ providerLabel(integrations.llm.provider) }}</strong> ({{ integrations.llm.model }})
           </p>
 
           <form v-if="llmConfigExpanded" class="stack" @submit.prevent="saveLlmConfig">
             <label>
               Provider
-              <select v-model="llmForm.provider" disabled>
-                <option value="perplexity">Perplexity</option>
+              <select v-model="llmForm.provider" @change="onLlmProviderChange">
+                <option v-for="provider in llmProviders" :key="provider.id" :value="provider.id">
+                  {{ provider.label }}
+                </option>
               </select>
             </label>
             <label>
               API Key
-              <input v-model="llmForm.api_key" type="password" required placeholder="pplx-..." />
+              <input v-model="llmForm.api_key" type="password" required placeholder="Enter provider API key" />
             </label>
             <label>
               Model
-              <input v-model="llmForm.model" type="text" placeholder="sonar-pro" />
+              <select v-model="llmForm.model">
+                <option v-for="modelName in selectedLlmProviderModels" :key="modelName" :value="modelName">
+                  {{ modelName }}
+                </option>
+                <option v-if="selectedLlmProviderAllowsOther" :value="OTHER_MODEL_VALUE">Other</option>
+              </select>
+            </label>
+            <label v-if="isOtherModelSelected && selectedLlmProviderAllowsOther">
+              Custom Model Name
+              <input
+                v-model="llmForm.customModel"
+                type="text"
+                required
+                placeholder="Enter any provider-specific model name"
+              />
             </label>
             <button :disabled="busy.savingLlm || isAnyProgressModalVisible">
               {{ busy.savingLlm ? "Saving..." : "Save LLM Config" }}

@@ -45,9 +45,6 @@ class Settings(BaseSettings):
     allow_manifest_commands: bool = False
     preview_ttl_seconds: int = 3_600
 
-    # Defaults
-    perplexity_default_model: str = "sonar-pro"
-
     # Dev convenience (for Vite dev server)
     cors_allow_origin: str = "*"
 
