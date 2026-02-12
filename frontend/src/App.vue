@@ -571,8 +571,9 @@ onBeforeUnmount(() => {
 
     <p v-if="flash" class="flash">{{ flash }}</p>
 
-    <main class="step-stack">
-      <details class="panel step-panel" :open="panelState.step1" @toggle="onPanelToggle('step1', $event)">
+    <div class="desktop-layout">
+      <main class="step-stack step-primary">
+        <details class="panel step-panel" :open="panelState.step1" @toggle="onPanelToggle('step1', $event)">
         <summary class="step-summary">
           <span class="step-index">Step 1</span>
           <h2>Choose LLM provider</h2>
@@ -615,9 +616,9 @@ onBeforeUnmount(() => {
             </button>
           </form>
         </div>
-      </details>
+        </details>
 
-      <details class="panel step-panel" :open="panelState.step2" @toggle="onPanelToggle('step2', $event)">
+        <details class="panel step-panel" :open="panelState.step2" @toggle="onPanelToggle('step2', $event)">
         <summary class="step-summary">
           <span class="step-index">Step 2</span>
           <h2>Build your app</h2>
@@ -643,9 +644,11 @@ onBeforeUnmount(() => {
             {{ busy.creatingJob ? "Submitting..." : "Build your app" }}
           </button>
         </form>
-      </details>
+        </details>
+      </main>
 
-      <details class="panel step-panel" :open="panelState.step3" @toggle="onPanelToggle('step3', $event)">
+      <aside class="step-stack step-secondary">
+        <details class="panel step-panel" :open="panelState.step3" @toggle="onPanelToggle('step3', $event)">
         <summary class="step-summary">
           <span class="step-index">Step 3</span>
           <h2>Get your app!</h2>
@@ -733,57 +736,58 @@ onBeforeUnmount(() => {
             </form>
           </div>
         </div>
-      </details>
-    </main>
+        </details>
 
-    <details class="panel step-panel past-jobs" :open="panelState.history" @toggle="onPanelToggle('history', $event)">
-      <summary class="step-summary">
-        <span class="step-index">History</span>
-        <h2>Past jobs</h2>
-      </summary>
+        <details class="panel step-panel past-jobs" :open="panelState.history" @toggle="onPanelToggle('history', $event)">
+          <summary class="step-summary">
+            <span class="step-index">History</span>
+            <h2>Past jobs</h2>
+          </summary>
 
-      <div class="jobs-list">
-        <button
-          v-for="job in jobs"
-          :key="job.job_id"
-          class="job-pill"
-          :class="{ selected: selectedJobId === job.job_id }"
-          @click="selectedJobId = job.job_id"
-        >
-          <span>{{ job.title }}</span>
-          <strong>{{ job.status }}</strong>
-        </button>
-        <p v-if="jobs.length === 0">No jobs yet.</p>
-      </div>
+          <div class="jobs-list">
+            <button
+              v-for="job in jobs"
+              :key="job.job_id"
+              class="job-pill"
+              :class="{ selected: selectedJobId === job.job_id }"
+              @click="selectedJobId = job.job_id"
+            >
+              <span>{{ job.title }}</span>
+              <strong>{{ job.status }}</strong>
+            </button>
+            <p v-if="jobs.length === 0">No jobs yet.</p>
+          </div>
 
-      <div v-if="selectedJob" class="job-detail">
-        <h3>Selected Job</h3>
-        <p><strong>ID:</strong> {{ selectedJob.job_id }}</p>
-        <p><strong>Status:</strong> {{ selectedJob.status }}</p>
-        <p><strong>Artifact:</strong> {{ selectedJob.artifact_name || "-" }}</p>
-        <p>
-          <strong>Repo:</strong>
-          <a v-if="selectedJob.repo_url" :href="selectedJob.repo_url" target="_blank">{{ selectedJob.repo_url }}</a>
-          <span v-else>-</span>
-        </p>
-        <p>
-          <strong>Pages:</strong>
-          <a v-if="selectedPagesUrl" :href="selectedPagesUrl" target="_blank" :title="pagesLinkHoverTitle">
-            {{ selectedPagesUrl }}{{ isSelectedPagesUrlEstimated ? " (estimated)" : "" }}
-          </a>
-          <span v-else>-</span>
-        </p>
-        <p><strong>Commit:</strong> <code>{{ selectedJob.commit_sha || "-" }}</code></p>
-        <p><strong>Error:</strong> {{ selectedJob.error_message || "-" }}</p>
+          <div v-if="selectedJob" class="job-detail">
+            <h3>Selected Job</h3>
+            <p><strong>ID:</strong> {{ selectedJob.job_id }}</p>
+            <p><strong>Status:</strong> {{ selectedJob.status }}</p>
+            <p><strong>Artifact:</strong> {{ selectedJob.artifact_name || "-" }}</p>
+            <p>
+              <strong>Repo:</strong>
+              <a v-if="selectedJob.repo_url" :href="selectedJob.repo_url" target="_blank">{{ selectedJob.repo_url }}</a>
+              <span v-else>-</span>
+            </p>
+            <p>
+              <strong>Pages:</strong>
+              <a v-if="selectedPagesUrl" :href="selectedPagesUrl" target="_blank" :title="pagesLinkHoverTitle">
+                {{ selectedPagesUrl }}{{ isSelectedPagesUrlEstimated ? " (estimated)" : "" }}
+              </a>
+              <span v-else>-</span>
+            </p>
+            <p><strong>Commit:</strong> <code>{{ selectedJob.commit_sha || "-" }}</code></p>
+            <p><strong>Error:</strong> {{ selectedJob.error_message || "-" }}</p>
 
-        <h4>Events</h4>
-        <ul class="events">
-          <li v-for="event in recentEvents" :key="event.id">
-            <span :class="event.level">{{ event.message }}</span>
-          </li>
-        </ul>
-      </div>
-    </details>
+            <h4>Events</h4>
+            <ul class="events">
+              <li v-for="event in recentEvents" :key="event.id">
+                <span :class="event.level">{{ event.message }}</span>
+              </li>
+            </ul>
+          </div>
+        </details>
+      </aside>
+    </div>
   </div>
 
   <div v-if="buildModal.visible" class="build-overlay">

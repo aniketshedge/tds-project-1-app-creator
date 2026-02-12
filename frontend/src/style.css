@@ -49,10 +49,22 @@ time {
   padding: 22px;
 }
 
+.desktop-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+  align-items: start;
+  gap: 16px;
+  margin-top: 14px;
+}
+
 .step-stack {
   display: grid;
   gap: 14px;
-  margin-top: 14px;
+}
+
+.step-primary,
+.step-secondary {
+  min-width: 0;
 }
 
 .hero {
@@ -362,7 +374,7 @@ button.ghost {
 }
 
 .past-jobs {
-  margin-top: 14px;
+  margin-top: 0;
 }
 
 .error {
@@ -453,6 +465,10 @@ button.ghost {
 }
 
 @media (max-width: 1080px) {
+  .desktop-layout {
+    grid-template-columns: 1fr;
+  }
+
   .hero {
     flex-direction: column;
   }
