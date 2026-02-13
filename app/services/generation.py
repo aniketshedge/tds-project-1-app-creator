@@ -16,22 +16,12 @@ SYSTEM_PROMPT = (
 )
 
 LLM_PROVIDER_MODELS: dict[str, list[str]] = {
-    "perplexity": [
-        "sonar",
-        "sonar-pro",
-        "sonar-reasoning-pro",
-    ],
-    "openai": [
-        "gpt-5",
-        "gpt-5-mini",
-        "gpt-5-nano",
-    ],
-    "anthropic": [
-        "claude-opus-4-1-20250805",
-        "claude-opus-4-20250514",
-        "claude-sonnet-4-20250514",
-        "claude-3-7-sonnet-20250219",
-        "claude-3-5-haiku-20241022",
+    "aipipe": [
+        "openai/gpt-5",
+        "openai/gpt-5-mini",
+        "openai/gpt-5-nano",
+        "anthropic/claude-3.5-sonnet",
+        "google/gemini-2.5-flash",
     ],
     "gemini": [
         "gemini-2.5-pro",
@@ -40,12 +30,22 @@ LLM_PROVIDER_MODELS: dict[str, list[str]] = {
         "gemini-2.0-flash",
         "gemini-2.0-flash-lite",
     ],
-    "aipipe": [
-        "openai/gpt-5-mini",
-        "openai/gpt-5-nano",
-        "openai/gpt-5",
-        "anthropic/claude-3.5-sonnet",
-        "google/gemini-2.5-flash",
+    "perplexity": [
+        "sonar-pro",
+        "sonar-reasoning-pro",
+        "sonar",
+    ],
+    "openai": [
+        "gpt-5",
+        "gpt-5-mini",
+        "gpt-5-nano",
+    ],
+    "anthropic": [
+        "claude-sonnet-4-20250514",
+        "claude-opus-4-1-20250805",
+        "claude-opus-4-20250514",
+        "claude-3-7-sonnet-20250219",
+        "claude-3-5-haiku-20241022",
     ],
 }
 

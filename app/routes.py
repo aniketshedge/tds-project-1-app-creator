@@ -287,7 +287,7 @@ def register_routes(app: Flask) -> None:
                 jsonify(
                     {
                         "error": "integrations_required",
-                        "message": "Configure an LLM provider before creating a job",
+                        "message": "Configure an AI model before creating a job",
                     }
                 ),
                 400,

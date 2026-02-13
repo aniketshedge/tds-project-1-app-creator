@@ -61,21 +61,27 @@ const providerCatalog = ref([]);
 const OTHER_MODEL_VALUE = "__other__";
 const FALLBACK_LLM_CATALOG = [
   {
-    id: "perplexity",
-    label: "Perplexity",
-    models: ["sonar", "sonar-pro", "sonar-reasoning-pro"],
-    allow_other: true,
-  },
-  {
     id: "aipipe",
     label: "AI Pipe",
     models: [
+      "openai/gpt-5",
       "openai/gpt-5-mini",
       "openai/gpt-5-nano",
-      "openai/gpt-5",
       "anthropic/claude-3.5-sonnet",
       "google/gemini-2.5-flash",
     ],
+    allow_other: true,
+  },
+  {
+    id: "gemini",
+    label: "Gemini",
+    models: ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash", "gemini-2.0-flash-lite"],
+    allow_other: true,
+  },
+  {
+    id: "perplexity",
+    label: "Perplexity",
+    models: ["sonar-pro", "sonar-reasoning-pro", "sonar"],
     allow_other: true,
   },
   {
@@ -88,18 +94,12 @@ const FALLBACK_LLM_CATALOG = [
     id: "anthropic",
     label: "Anthropic",
     models: [
+      "claude-sonnet-4-20250514",
       "claude-opus-4-1-20250805",
       "claude-opus-4-20250514",
-      "claude-sonnet-4-20250514",
       "claude-3-7-sonnet-20250219",
       "claude-3-5-haiku-20241022",
     ],
-    allow_other: true,
-  },
-  {
-    id: "gemini",
-    label: "Gemini",
-    models: ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash", "gemini-2.0-flash-lite"],
     allow_other: true,
   },
 ];
@@ -690,7 +690,7 @@ async function saveLlmConfig() {
   }
 
   if (!resolvedLlmModel.value) {
-    flash.value = "Select a model before saving the LLM config.";
+    flash.value = "Select a model before saving AI model settings.";
     busy.savingLlm = false;
     return;
   }
@@ -708,9 +708,9 @@ async function saveLlmConfig() {
     applyLlmStateFromIntegrations();
     llmForm.api_key = "";
     llmConfigExpanded.value = false;
-    flash.value = "LLM provider configured for this session.";
+    flash.value = "AI model settings saved for this session.";
   } catch (error) {
-    flash.value = `Failed to save LLM config: ${error.message}`;
+    flash.value = `Failed to save AI model settings: ${error.message}`;
   } finally {
     busy.savingLlm = false;
   }
@@ -996,19 +996,19 @@ onBeforeUnmount(() => {
         <details class="panel step-panel" :open="panelState.step1" @toggle="onPanelToggle('step1', $event)">
         <summary class="step-summary">
           <span class="step-index">Step 1</span>
-          <h2>Choose LLM provider</h2>
+          <h2>Choose AI model</h2>
         </summary>
 
         <div class="stack llm-section">
           <div class="llm-head">
-            <h3>LLM Provider</h3>
+            <h3>AI Model</h3>
             <button
               v-if="hasSavedLlmConfig && !llmConfigExpanded"
               class="ghost"
               type="button"
               @click="startLlmConfigChange"
             >
-              Change LLM Config
+              Change AI model settings
             </button>
           </div>
 
@@ -1018,7 +1018,7 @@ onBeforeUnmount(() => {
 
           <form v-if="llmConfigExpanded" class="stack" @submit.prevent="saveLlmConfig">
             <label>
-              Provider
+              Service
               <select v-model="llmForm.provider" @change="onLlmProviderChange">
                 <option v-for="provider in llmProviders" :key="provider.id" :value="provider.id">
                   {{ provider.label }}
@@ -1027,7 +1027,7 @@ onBeforeUnmount(() => {
             </label>
             <label>
               API Key
-              <input v-model="llmForm.api_key" type="password" required placeholder="Enter provider API key" />
+              <input v-model="llmForm.api_key" type="password" required placeholder="Enter API key for selected service" />
             </label>
             <label>
               Model
@@ -1038,6 +1038,7 @@ onBeforeUnmount(() => {
                 <option v-if="selectedLlmProviderAllowsOther" :value="OTHER_MODEL_VALUE">Other</option>
               </select>
             </label>
+            <p class="hint">Use the default if you are unsure.</p>
             <label v-if="isOtherModelSelected && selectedLlmProviderAllowsOther">
               Custom Model Name
               <input
@@ -1048,7 +1049,7 @@ onBeforeUnmount(() => {
               />
             </label>
             <button :disabled="busy.savingLlm || isAnyProgressModalVisible">
-              {{ busy.savingLlm ? "Saving..." : "Save LLM Config" }}
+              {{ busy.savingLlm ? "Saving..." : "Save AI model settings" }}
             </button>
           </form>
         </div>
