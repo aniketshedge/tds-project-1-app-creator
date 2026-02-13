@@ -684,25 +684,6 @@ button.ghost {
   flex-wrap: wrap;
 }
 
-.popup-link-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: none;
-  border-radius: 10px;
-  padding: 9px 11px;
-  background: var(--accent);
-  color: #ffffff;
-  font-weight: 700;
-  cursor: pointer;
-  transition: transform 150ms ease, background-color 150ms ease;
-}
-
-.popup-link-button:hover {
-  transform: translateY(-1px);
-  background: var(--accent-strong);
-}
-
 @keyframes spin {
   to {
     transform: rotate(360deg);

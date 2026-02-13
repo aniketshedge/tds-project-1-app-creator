@@ -891,6 +891,7 @@ async function preparePreview() {
 
   busy.creatingPreview = true;
   previewPrompt.error = "";
+  const previewWindow = window.open("about:blank", "_blank", "noopener");
   try {
     const payload = await api(`/api/jobs/${selectedJobId.value}/preview`, {
       method: "POST",
@@ -900,7 +901,16 @@ async function preparePreview() {
       throw new Error("Preview URL missing from server response");
     }
     previewPrompt.previewUrl = previewUrl;
+    if (previewWindow && !previewWindow.closed) {
+      previewWindow.location = previewUrl;
+    } else {
+      window.open(previewUrl, "_blank", "noopener");
+    }
+    closePreviewPrompt();
   } catch (error) {
+    if (previewWindow && !previewWindow.closed) {
+      previewWindow.close();
+    }
     previewPrompt.error = `Failed to create preview: ${error.message}`;
   } finally {
     busy.creatingPreview = false;
@@ -1416,13 +1426,13 @@ onBeforeUnmount(() => {
           It is not a production-grade managed service.
         </p>
         <p>
-          Created using GPT-5.3 Codex. Outputs can be imperfect, incomplete, or unsuitable for your use case.
+          Created using OpenAI GPT-5.3 Codex. Outputs can be imperfect, incomplete, or unsuitable for your use case.
           No guarantees of any kind are provided.
         </p>
       </section>
 
       <section class="terms-section">
-        <h4>Terms of Use (Short Form)</h4>
+        <h4>Terms of Use</h4>
         <ul>
           <li>You are responsible for reviewing all generated code before using or publishing it.</li>
           <li>You are responsible for API keys, GitHub actions, and any usage costs on third-party services.</li>
@@ -1434,17 +1444,12 @@ onBeforeUnmount(() => {
 
       <section class="terms-section">
         <h4>Source Code</h4>
-        <p>
-          Source code is available at
-          <a
-            class="inline-link"
-            href="https://github.com/aniketshedge/tds-project-1-app-creator"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            github.com/aniketshedge/tds-project-1-app-creator
-          </a>
-        </p>
+        <p>Source code is available at: <a
+          class="inline-link"
+          href="https://github.com/aniketshedge/tds-project-1-app-creator"
+          target="_blank"
+          rel="noopener noreferrer"
+        >github.com/aniketshedge/tds-project-1-app-creator</a></p>
       </section>
     </div>
   </div>
@@ -1487,23 +1492,12 @@ onBeforeUnmount(() => {
       <p v-if="previewPrompt.error" class="error">{{ previewPrompt.error }}</p>
       <div class="preview-actions">
         <button
-          v-if="!previewPrompt.previewUrl"
           type="button"
           :disabled="busy.creatingPreview"
           @click="preparePreview"
         >
-          {{ busy.creatingPreview ? "Preparing..." : "OK" }}
+          {{ busy.creatingPreview ? "Preparing..." : "OK, open preview" }}
         </button>
-        <a
-          v-else
-          class="popup-link-button"
-          :href="previewPrompt.previewUrl"
-          target="_blank"
-          rel="noopener"
-          @click="closePreviewPrompt"
-        >
-          OK, open preview
-        </a>
         <button
           v-if="previewPrompt.error && !busy.creatingPreview"
           class="ghost"
