@@ -11,9 +11,14 @@ Self-hosted service for generating and deploying static web apps from natural-la
 
 ## Architecture
 
-- `web` serves the Vue UI and `/api/*` routes.
+- `web` serves the Vue UI and API routes.
 - `worker` processes queued jobs and performs generation/deployment.
 - `redis` stores queue data and ephemeral session credentials.
+
+Base-path support:
+- Set `APP_BASE_PATH=/` (default) for root hosting.
+- Set `APP_BASE_PATH=/app-creator` for subpath hosting.
+- Build frontend with matching `VITE_APP_BASE_PATH` (same value as `APP_BASE_PATH`).
 
 Sensitive data policy:
 - GitHub App user token and LLM API key are stored only in Redis with TTL.
@@ -22,7 +27,7 @@ Sensitive data policy:
 
 ## Core Flow
 
-1. Browser gets a session cookie from `/api/session`.
+1. Browser gets a session cookie from the configured base path API endpoint.
 2. User optionally connects GitHub via GitHub App user authorization.
 3. User configures one LLM provider/model at a time using a session-scoped API key.
 4. User submits a build job (title + app description).
@@ -31,6 +36,8 @@ Sensitive data policy:
 7. UI polls job status and event logs.
 
 ## API (v1)
+
+If `APP_BASE_PATH=/app-creator`, all endpoints are served under `/app-creator` (for example `/app-creator/api/health`).
 
 - `GET /api/health`
 - `GET /api/session`
@@ -97,6 +104,8 @@ Set GitHub App values in `.env`:
 - `GITHUB_APP_CLIENT_SECRET`
 - `GITHUB_APP_CALLBACK_URL`
 - optional: `GITHUB_APP_SLUG` (enables the frontend "Install App" button)
+- optional: `APP_BASE_PATH` (use `/app-creator` for subpath hosting)
+- optional: `VITE_APP_BASE_PATH` (must match `APP_BASE_PATH` when building frontend assets)
 
 Run Redis locally, then:
 
@@ -120,7 +129,7 @@ npm install
 npm run dev
 ```
 
-Vite proxies `/api` to `http://localhost:8000`.
+Vite proxies `${VITE_APP_BASE_PATH}/api` to `http://localhost:8000`.
 
 ## Docker Deployment
 
@@ -151,6 +160,7 @@ Then copy:
 - App slug -> `GITHUB_APP_SLUG` (optional)
 
 For production behind Cloudflare, set callback URL to your public domain path.
+Example with subpath hosting: `https://apps.example.com/app-creator/api/auth/github/callback`.
 
 ## Project Structure
 

@@ -36,26 +36,34 @@ logger = logging.getLogger(__name__)
 
 
 def register_routes(app: Flask) -> None:
+    settings: Settings = app.config["settings"]
+    base_path = "" if settings.app_base_path == "/" else settings.app_base_path
+
+    def scoped(rule: str) -> str:
+        if not base_path:
+            return rule
+        if rule == "/":
+            return f"{base_path}/"
+        return f"{base_path}{rule}"
+
     @app.after_request
     def add_cors_headers(response: Response) -> Response:
-        settings: Settings = current_app.config["settings"]
         response.headers.setdefault("Access-Control-Allow-Origin", settings.cors_allow_origin)
         response.headers.setdefault("Access-Control-Allow-Headers", "Content-Type")
         response.headers.setdefault("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         return response
 
-    @app.route("/api/<path:_path>", methods=["OPTIONS"])
+    @app.route(scoped("/api/<path:_path>"), methods=["OPTIONS"])
     def api_options(_path: str):
         return "", 204
 
-    @app.get("/api/health")
+    @app.get(scoped("/api/health"))
     def healthcheck() -> tuple[dict[str, str], int]:
         return {"status": "ok"}, 200
 
-    @app.get("/api/session")
+    @app.get(scoped("/api/session"))
     def get_session() -> Response:
         session_id, is_new = _get_or_create_session()
-        settings: Settings = current_app.config["settings"]
         response = jsonify(
             {
                 "session_id": session_id,
@@ -66,9 +74,8 @@ def register_routes(app: Flask) -> None:
             _set_session_cookie(response, session_id, settings)
         return response
 
-    @app.post("/api/session/reset")
+    @app.post(scoped("/api/session/reset"))
     def reset_session() -> Response:
-        settings: Settings = current_app.config["settings"]
         store: SessionStore = current_app.config["session_store"]
 
         old = request.cookies.get(settings.session_cookie_name)
@@ -83,30 +90,28 @@ def register_routes(app: Flask) -> None:
         _set_session_cookie(response, session_id, settings)
         return response
 
-    @app.get("/api/integrations")
+    @app.get(scoped("/api/integrations"))
     def get_integrations() -> Response:
         session_id, is_new = _get_or_create_session()
         store: SessionStore = current_app.config["session_store"]
 
         response = jsonify(store.integration_state(session_id))
         if is_new:
-            _set_session_cookie(response, session_id, current_app.config["settings"])
+            _set_session_cookie(response, session_id, settings)
         return response
 
-    @app.get("/api/integrations/llm/catalog")
+    @app.get(scoped("/api/integrations/llm/catalog"))
     def get_llm_catalog() -> Response:
         session_id, is_new = _get_or_create_session()
-        settings: Settings = current_app.config["settings"]
         response = jsonify({"providers": llm_provider_catalog()})
         if is_new:
             _set_session_cookie(response, session_id, settings)
         return response
 
-    @app.post("/api/integrations/llm")
+    @app.post(scoped("/api/integrations/llm"))
     def configure_llm() -> Response:
         session_id, is_new = _get_or_create_session()
         store: SessionStore = current_app.config["session_store"]
-        settings: Settings = current_app.config["settings"]
 
         payload = request.get_json(silent=True) or {}
         try:
@@ -130,10 +135,9 @@ def register_routes(app: Flask) -> None:
             _set_session_cookie(response, session_id, settings)
         return response
 
-    @app.get("/api/auth/github/start")
+    @app.get(scoped("/api/auth/github/start"))
     def github_auth_start() -> Response:
         session_id, is_new = _get_or_create_session()
-        settings: Settings = current_app.config["settings"]
         store: SessionStore = current_app.config["session_store"]
 
         state = uuid4().hex
@@ -154,9 +158,8 @@ def register_routes(app: Flask) -> None:
             _set_session_cookie(response, session_id, settings)
         return response
 
-    @app.get("/api/auth/github/callback")
+    @app.get(scoped("/api/auth/github/callback"))
     def github_auth_callback() -> Response:
-        settings: Settings = current_app.config["settings"]
         store: SessionStore = current_app.config["session_store"]
         session_id = request.cookies.get(settings.session_cookie_name)
 
@@ -198,10 +201,9 @@ def register_routes(app: Flask) -> None:
 
         return redirect(_frontend_redirect_url(settings, status="connected"))
 
-    @app.post("/api/auth/github/disconnect")
+    @app.post(scoped("/api/auth/github/disconnect"))
     def github_auth_disconnect() -> Response:
         session_id, is_new = _get_or_create_session()
-        settings: Settings = current_app.config["settings"]
         store: SessionStore = current_app.config["session_store"]
         store.clear_github_credentials(session_id)
 
@@ -210,10 +212,9 @@ def register_routes(app: Flask) -> None:
             _set_session_cookie(response, session_id, settings)
         return response
 
-    @app.post("/api/jobs")
+    @app.post(scoped("/api/jobs"))
     def submit_job() -> Response:
         session_id, is_new = _get_or_create_session()
-        settings: Settings = current_app.config["settings"]
         repository: TaskRepository = current_app.config["repository"]
         queue = current_app.config["queue"]
         store: SessionStore = current_app.config["session_store"]
@@ -291,11 +292,10 @@ def register_routes(app: Flask) -> None:
             _set_session_cookie(response, session_id, settings)
         return response
 
-    @app.post("/api/jobs/<job_id>/deploy")
+    @app.post(scoped("/api/jobs/<job_id>/deploy"))
     def deploy_job(job_id: str) -> Response:
         session_id, is_new = _get_or_create_session()
         repository: TaskRepository = current_app.config["repository"]
-        settings: Settings = current_app.config["settings"]
         queue = current_app.config["queue"]
         store: SessionStore = current_app.config["session_store"]
 
@@ -379,38 +379,35 @@ def register_routes(app: Flask) -> None:
             _set_session_cookie(response, session_id, settings)
         return response
 
-    @app.get("/api/jobs")
+    @app.get(scoped("/api/jobs"))
     def list_jobs() -> Response:
         session_id, is_new = _get_or_create_session()
         repository: TaskRepository = current_app.config["repository"]
-        settings: Settings = current_app.config["settings"]
 
         jobs = repository.list_jobs_for_session(session_id)
-        response = jsonify({"jobs": [_serialize_job(job) for job in jobs]})
+        response = jsonify({"jobs": [_serialize_job(job, settings) for job in jobs]})
         if is_new:
             _set_session_cookie(response, session_id, settings)
         return response
 
-    @app.get("/api/jobs/<job_id>")
+    @app.get(scoped("/api/jobs/<job_id>"))
     def get_job(job_id: str) -> Response:
         session_id, is_new = _get_or_create_session()
         repository: TaskRepository = current_app.config["repository"]
-        settings: Settings = current_app.config["settings"]
 
         job = repository.fetch_job(job_id)
         if not job or job.session_id != session_id:
             return jsonify({"error": "not_found"}), 404
 
-        response = jsonify(_serialize_job(job))
+        response = jsonify(_serialize_job(job, settings))
         if is_new:
             _set_session_cookie(response, session_id, settings)
         return response
 
-    @app.get("/api/jobs/<job_id>/events")
+    @app.get(scoped("/api/jobs/<job_id>/events"))
     def get_job_events(job_id: str) -> Response:
         session_id, is_new = _get_or_create_session()
         repository: TaskRepository = current_app.config["repository"]
-        settings: Settings = current_app.config["settings"]
 
         job = repository.fetch_job(job_id)
         if not job or job.session_id != session_id:
@@ -433,11 +430,10 @@ def register_routes(app: Flask) -> None:
             _set_session_cookie(response, session_id, settings)
         return response
 
-    @app.get("/api/jobs/<job_id>/download")
+    @app.get(scoped("/api/jobs/<job_id>/download"))
     def download_job_artifact(job_id: str):
         session_id, is_new = _get_or_create_session()
         repository: TaskRepository = current_app.config["repository"]
-        settings: Settings = current_app.config["settings"]
 
         job = repository.fetch_job(job_id)
         if not job or job.session_id != session_id:
@@ -458,11 +454,10 @@ def register_routes(app: Flask) -> None:
             _set_session_cookie(response, session_id, settings)
         return response
 
-    @app.post("/api/jobs/<job_id>/preview")
+    @app.post(scoped("/api/jobs/<job_id>/preview"))
     def create_job_preview(job_id: str) -> Response:
         session_id, is_new = _get_or_create_session()
         repository: TaskRepository = current_app.config["repository"]
-        settings: Settings = current_app.config["settings"]
 
         rate_limited = _enforce_rate_limit(
             session_id=session_id,
@@ -537,7 +532,7 @@ def register_routes(app: Flask) -> None:
 
         response = jsonify(
             {
-                "preview_url": f"/preview/{token}/",
+                "preview_url": _app_url(settings, f"/preview/{token}/"),
                 "expires_at": expires_at.isoformat(),
                 "expires_in_seconds": settings.preview_ttl_seconds,
             }
@@ -546,14 +541,13 @@ def register_routes(app: Flask) -> None:
             _set_session_cookie(response, session_id, settings)
         return response
 
-    @app.get("/preview/<token>")
+    @app.get(scoped("/preview/<token>"))
     def serve_preview_root(token: str) -> Response:
-        return redirect(f"/preview/{token}/")
+        return redirect(_app_url(settings, f"/preview/{token}/"))
 
-    @app.get("/preview/<token>/")
-    @app.get("/preview/<token>/<path:asset_path>")
+    @app.get(scoped("/preview/<token>/"))
+    @app.get(scoped("/preview/<token>/<path:asset_path>"))
     def serve_preview_asset(token: str, asset_path: str = "index.html"):
-        settings: Settings = current_app.config["settings"]
         _cleanup_expired_previews(settings)
 
         site_dir = _resolve_preview_site(token, settings)
@@ -574,14 +568,14 @@ def register_routes(app: Flask) -> None:
             return send_from_directory(str(site_dir), "index.html")
         return jsonify({"error": "preview_not_found"}), 404
 
-    @app.get("/")
+    @app.get(scoped("/"))
     def serve_index() -> Response:
         static_root = current_app.static_folder
         if not static_root or not Path(static_root, "index.html").exists():
             return jsonify({"message": "Frontend is not built yet."}), 200
         return send_from_directory(static_root, "index.html")
 
-    @app.get("/<path:path>")
+    @app.get(scoped("/<path:path>"))
     def serve_spa(path: str) -> Response:
         if path.startswith("api/"):
             return jsonify({"error": "not_found"}), 404
@@ -608,6 +602,7 @@ def _get_or_create_session() -> tuple[str, bool]:
 
 
 def _set_session_cookie(response: Response, session_id: str, settings: Settings) -> None:
+    cookie_path = settings.app_base_path if settings.app_base_path != "/" else "/"
     response.set_cookie(
         settings.session_cookie_name,
         session_id,
@@ -615,21 +610,35 @@ def _set_session_cookie(response: Response, session_id: str, settings: Settings)
         httponly=True,
         secure=settings.session_cookie_secure,
         samesite="Lax",
-        path="/",
+        path=cookie_path,
     )
 
 
 def _frontend_redirect_url(settings: Settings, *, status: str, reason: str | None = None) -> str:
-    path = (settings.frontend_callback_path or "/").strip()
+    path = (settings.frontend_callback_path or "").strip()
+    if not path or path == "/":
+        path = settings.app_base_path
     if not path.startswith("/"):
         path = f"/{path}"
     if path.startswith("/api/"):
-        path = "/"
+        path = settings.app_base_path
 
     query = {"github": status}
     if reason:
         query["reason"] = reason
     return f"{path}?{urlencode(query)}"
+
+
+def _app_url(settings: Settings, path: str) -> str:
+    if not path.startswith("/"):
+        path = f"/{path}"
+    if settings.app_base_path == "/":
+        return path
+    if path == "/":
+        return f"{settings.app_base_path}/"
+    if path.startswith(settings.app_base_path + "/"):
+        return path
+    return f"{settings.app_base_path}{path}"
 
 
 def _resolve_artifact_path(job, settings: Settings) -> Path | None:
@@ -779,7 +788,7 @@ def _read_preview_metadata(preview_dir: Path) -> dict[str, object] | None:
     return payload
 
 
-def _serialize_job(job) -> dict[str, object]:
+def _serialize_job(job, settings: Settings) -> dict[str, object]:
     return {
         "job_id": job.id,
         "status": job.status,
@@ -795,7 +804,7 @@ def _serialize_job(job) -> dict[str, object]:
         "pages_url": job.pages_url,
         "commit_sha": job.commit_sha,
         "artifact_name": job.artifact_name,
-        "download_url": f"/api/jobs/{job.id}/download" if job.artifact_path else None,
+        "download_url": _app_url(settings, f"/api/jobs/{job.id}/download") if job.artifact_path else None,
         "error_code": job.error_code,
         "error_message": job.error_message,
         "created_at": job.created_at.isoformat(),

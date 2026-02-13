@@ -1,6 +1,9 @@
 services:
   web:
-    build: .
+    build:
+      context: .
+      args:
+        VITE_APP_BASE_PATH: ${VITE_APP_BASE_PATH:-/}
     container_name: app-creator-web
     ports:
       - "8000:8000"
@@ -15,6 +18,7 @@ services:
       PREVIEW_ROOT: /app/data/previews
       WORKSPACE_ROOT: /tmp/task-runner
       FRONTEND_DIST: /app/frontend/dist
+      APP_BASE_PATH: ${APP_BASE_PATH:-/}
       SESSION_COOKIE_SECURE: "false"
       PREVIEW_TTL_SECONDS: "3600"
     volumes:
@@ -22,7 +26,10 @@ services:
     restart: unless-stopped
 
   worker:
-    build: .
+    build:
+      context: .
+      args:
+        VITE_APP_BASE_PATH: ${VITE_APP_BASE_PATH:-/}
     container_name: app-creator-worker
     command: ["python", "worker.py"]
     depends_on:
@@ -36,6 +43,7 @@ services:
       PREVIEW_ROOT: /app/data/previews
       WORKSPACE_ROOT: /tmp/task-runner
       FRONTEND_DIST: /app/frontend/dist
+      APP_BASE_PATH: ${APP_BASE_PATH:-/}
       SESSION_COOKIE_SECURE: "false"
       PREVIEW_TTL_SECONDS: "3600"
     volumes:

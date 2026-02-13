@@ -1,5 +1,7 @@
 FROM node:20-alpine AS frontend-builder
 WORKDIR /frontend
+ARG VITE_APP_BASE_PATH=/
+ENV VITE_APP_BASE_PATH=${VITE_APP_BASE_PATH}
 COPY frontend/package.json frontend/package-lock.json* ./
 RUN npm install
 COPY frontend/ ./

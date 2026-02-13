@@ -1,6 +1,36 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 
+const APP_BASE_PATH = normalizeAppBasePath(import.meta.env.BASE_URL || "/");
+
+function normalizeAppBasePath(rawBasePath) {
+  const value = typeof rawBasePath === "string" ? rawBasePath.trim() : "";
+  if (!value || value === "/") {
+    return "";
+  }
+  const withLeadingSlash = value.startsWith("/") ? value : `/${value}`;
+  return withLeadingSlash.endsWith("/") ? withLeadingSlash.slice(0, -1) : withLeadingSlash;
+}
+
+function withBasePath(path) {
+  if (typeof path !== "string" || !path) {
+    return path;
+  }
+  if (/^https?:\/\//i.test(path)) {
+    return path;
+  }
+  if (!APP_BASE_PATH) {
+    return path;
+  }
+  if (path === "/") {
+    return APP_BASE_PATH;
+  }
+  if (path.startsWith(APP_BASE_PATH + "/")) {
+    return path;
+  }
+  return path.startsWith("/") ? `${APP_BASE_PATH}${path}` : `${APP_BASE_PATH}/${path}`;
+}
+
 const session = ref(null);
 const integrations = ref({
   github: { connected: false, username: null },
@@ -370,7 +400,7 @@ function restoreUiDraft() {
 }
 
 async function api(path, options = {}) {
-  const response = await fetch(path, {
+  const response = await fetch(withBasePath(path), {
     credentials: "include",
     ...options,
   });

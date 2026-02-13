@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     github_app_scope: str = "repo read:user user:email"
     github_app_slug: str = ""
     frontend_callback_path: str = "/"
+    app_base_path: str = "/"
 
     # Queue / storage
     redis_url: str = "redis://127.0.0.1:6379/0"
@@ -54,6 +55,8 @@ class Settings(BaseSettings):
     cors_allow_origin: str = "*"
 
     def resolve_paths(self) -> None:
+        self.app_base_path = _normalize_base_path(self.app_base_path)
+
         db_path = Path(self.database_path).expanduser().resolve()
         workspace = Path(self.workspace_root).expanduser().resolve()
         package_root = Path(self.package_root).expanduser().resolve()
@@ -73,3 +76,13 @@ class Settings(BaseSettings):
         preview_root.mkdir(parents=True, exist_ok=True)
         Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
         log_path.parent.mkdir(parents=True, exist_ok=True)
+
+
+def _normalize_base_path(raw_path: str) -> str:
+    candidate = (raw_path or "/").strip()
+    if not candidate or candidate == "/":
+        return "/"
+    if not candidate.startswith("/"):
+        candidate = f"/{candidate}"
+    candidate = candidate.rstrip("/")
+    return candidate or "/"
