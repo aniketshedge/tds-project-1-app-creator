@@ -154,6 +154,74 @@ const previewPrompt = reactive({
   error: "",
   previewUrl: "",
 });
+const serviceHelp = reactive({
+  visible: false,
+});
+const termsModal = reactive({
+  visible: false,
+});
+const serviceHelpItems = [
+  {
+    id: "aipipe",
+    label: "AI Pipe",
+    summary:
+      "Fastest way to start. Sign in with Google and copy your token in a minute.",
+    cost:
+      "Free while credits last. Publicly documented usage is around $0.10/week.",
+    officialUrl: "https://aipipe.org/login",
+    officialLabel: "Get key/token",
+    videoUrl: "",
+    videoLabel: "",
+  },
+  {
+    id: "gemini",
+    label: "Gemini",
+    summary:
+      "Great for beginners. Easy key setup in Google AI Studio and often good free limits.",
+    cost:
+      "Has a free tier for supported regions/models, with paid usage for higher limits.",
+    officialUrl: "https://aistudio.google.com/app/apikey",
+    officialLabel: "Create API key",
+    videoUrl: "https://www.youtube.com/watch?v=Uyn-P2nRvDA",
+    videoLabel: "Watch key setup video",
+  },
+  {
+    id: "perplexity",
+    label: "Perplexity",
+    summary:
+      "Good if you already use Perplexity and want search-friendly model behavior.",
+    cost:
+      "API usage depends on your account plan. Some Pro plans include API credits.",
+    officialUrl: "https://docs.perplexity.ai/docs/getting-started/quickstart",
+    officialLabel: "Open API quickstart",
+    videoUrl: "https://www.youtube.com/watch?v=2hlByIvM7OA",
+    videoLabel: "Watch key setup video",
+  },
+  {
+    id: "openai",
+    label: "OpenAI",
+    summary:
+      "Most common API choice with strong output quality for app generation.",
+    cost:
+      "Typically paid. You usually need to set up billing before regular use.",
+    officialUrl: "https://platform.openai.com/api-keys",
+    officialLabel: "Create API key",
+    videoUrl: "https://www.youtube.com/watch?v=OB99E7Y1cMA",
+    videoLabel: "Watch key setup video",
+  },
+  {
+    id: "anthropic",
+    label: "Anthropic",
+    summary:
+      "Strong coding-oriented models and reliable structured responses.",
+    cost:
+      "Mostly paid. New users may get small trial credits, but treat it as paid by default.",
+    officialUrl: "https://console.anthropic.com/settings/keys",
+    officialLabel: "Create API key",
+    videoUrl: "https://www.youtube.com/watch?v=2w75E9cQPUM",
+    videoLabel: "Watch key setup video",
+  },
+];
 
 const buildInFlightStatuses = new Set(["queued", "in_progress", "deploying"]);
 const pagesLinkHoverTitle = "GitHub Pages can take a few minutes to become live after deployment.";
@@ -308,6 +376,17 @@ function applyResponsivePanelDefaults(force = false) {
 
 function handleResize() {
   applyResponsivePanelDefaults(false);
+}
+
+function handleGlobalKeydown(event) {
+  if (event.key === "Escape") {
+    if (serviceHelp.visible) {
+      closeServiceHelp();
+    }
+    if (termsModal.visible) {
+      closeTermsModal();
+    }
+  }
 }
 
 function saveUiDraft() {
@@ -599,6 +678,22 @@ function applyLlmStateFromIntegrations() {
 
 function onLlmProviderChange() {
   setLlmProviderAndModel(llmForm.provider, "");
+}
+
+function openServiceHelp() {
+  serviceHelp.visible = true;
+}
+
+function closeServiceHelp() {
+  serviceHelp.visible = false;
+}
+
+function openTermsModal() {
+  termsModal.visible = true;
+}
+
+function closeTermsModal() {
+  termsModal.visible = false;
 }
 
 async function bootstrap() {
@@ -962,6 +1057,7 @@ onMounted(async () => {
 
   applyResponsivePanelDefaults(true);
   window.addEventListener("resize", handleResize);
+  window.addEventListener("keydown", handleGlobalKeydown);
 
   await bootstrap();
   startPolling();
@@ -970,6 +1066,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   stopPolling();
   window.removeEventListener("resize", handleResize);
+  window.removeEventListener("keydown", handleGlobalKeydown);
 });
 </script>
 
@@ -1018,7 +1115,10 @@ onBeforeUnmount(() => {
 
           <form v-if="llmConfigExpanded" class="stack" @submit.prevent="saveLlmConfig">
             <label>
-              Service
+              <span class="field-label-row">
+                <span>Service</span>
+                <button class="text-link" type="button" @click="openServiceHelp">Help me choose</button>
+              </span>
               <select v-model="llmForm.provider" @change="onLlmProviderChange">
                 <option v-for="provider in llmProviders" :key="provider.id" :value="provider.id">
                   {{ provider.label }}
@@ -1261,8 +1361,92 @@ onBeforeUnmount(() => {
     </div>
 
     <footer class="footer-bar">
-      <p class="footer-note">Created and hosted by Aniket Shedge</p>
+      <div class="footer-row">
+        <p class="footer-note">Created and hosted by Aniket Shedge</p>
+        <button class="text-link footer-link" type="button" @click="openTermsModal">Disclaimers & Terms</button>
+      </div>
     </footer>
+  </div>
+
+  <div v-if="serviceHelp.visible" class="service-help-overlay" @click.self="closeServiceHelp">
+    <div class="service-help-popup" role="dialog" aria-modal="true" aria-labelledby="service-help-title">
+      <div class="service-help-head">
+        <h3 id="service-help-title">Help me choose a service</h3>
+        <button class="ghost" type="button" @click="closeServiceHelp">Close</button>
+      </div>
+      <p class="hint">
+        Prices and free-credit policies can change at any time. Always confirm in the official dashboard before
+        creating many builds.
+      </p>
+      <div class="service-help-grid">
+        <article v-for="item in serviceHelpItems" :key="item.id" class="service-help-card">
+          <h4>{{ item.label }}</h4>
+          <p>{{ item.summary }}</p>
+          <p class="service-help-cost">{{ item.cost }}</p>
+          <div class="service-help-links">
+            <a class="inline-link" :href="item.officialUrl" target="_blank" rel="noopener noreferrer">
+              {{ item.officialLabel }}
+            </a>
+            <a
+              v-if="item.videoUrl"
+              class="inline-link"
+              :href="item.videoUrl"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              {{ item.videoLabel }}
+            </a>
+          </div>
+        </article>
+      </div>
+    </div>
+  </div>
+
+  <div v-if="termsModal.visible" class="terms-overlay" @click.self="closeTermsModal">
+    <div class="terms-popup" role="dialog" aria-modal="true" aria-labelledby="terms-title">
+      <div class="terms-head">
+        <h3 id="terms-title">Disclaimers and Terms</h3>
+        <button class="ghost" type="button" @click="closeTermsModal">Close</button>
+      </div>
+
+      <section class="terms-section">
+        <h4>Quick Disclaimer</h4>
+        <p>
+          This hobby project was initially built for an academic course and later extended for self-learning.
+          It is not a production-grade managed service.
+        </p>
+        <p>
+          Created using GPT-5.3 Codex. Outputs can be imperfect, incomplete, or unsuitable for your use case.
+          No guarantees of any kind are provided.
+        </p>
+      </section>
+
+      <section class="terms-section">
+        <h4>Terms of Use (Short Form)</h4>
+        <ul>
+          <li>You are responsible for reviewing all generated code before using or publishing it.</li>
+          <li>You are responsible for API keys, GitHub actions, and any usage costs on third-party services.</li>
+          <li>Do not use this service for unlawful content or unauthorized access attempts.</li>
+          <li>Service availability is best-effort and may change or stop at any time without notice.</li>
+          <li>By using this app, you accept that the maintainer is not liable for losses or damages.</li>
+        </ul>
+      </section>
+
+      <section class="terms-section">
+        <h4>Source Code</h4>
+        <p>
+          Source code is available at
+          <a
+            class="inline-link"
+            href="https://github.com/aniketshedge/tds-project-1-app-creator"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            github.com/aniketshedge/tds-project-1-app-creator
+          </a>
+        </p>
+      </section>
+    </div>
   </div>
 
   <div v-if="buildModal.visible" class="build-overlay">
