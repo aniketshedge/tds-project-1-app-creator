@@ -20,14 +20,11 @@ LLM_PROVIDER_MODELS: dict[str, list[str]] = {
         "sonar",
         "sonar-pro",
         "sonar-reasoning-pro",
-        "sonar-deep-research",
     ],
     "openai": [
-        "gpt-4.1",
-        "gpt-4.1-mini",
-        "gpt-4.1-nano",
-        "gpt-4o",
-        "gpt-4o-mini",
+        "gpt-5",
+        "gpt-5-mini",
+        "gpt-5-nano",
     ],
     "anthropic": [
         "claude-opus-4-1-20250805",
@@ -44,9 +41,9 @@ LLM_PROVIDER_MODELS: dict[str, list[str]] = {
         "gemini-2.0-flash-lite",
     ],
     "aipipe": [
-        "openai/gpt-4.1-mini",
-        "openai/gpt-4.1-nano",
-        "openai/gpt-4o-mini",
+        "openai/gpt-5-mini",
+        "openai/gpt-5-nano",
+        "openai/gpt-5",
         "anthropic/claude-3.5-sonnet",
         "google/gemini-2.5-flash",
     ],
@@ -143,7 +140,11 @@ class UnifiedGenerationService:
         if self.provider == "perplexity":
             return self._chat_completion_request("https://api.perplexity.ai/chat/completions", prompt)
         if self.provider == "openai":
-            return self._chat_completion_request("https://api.openai.com/v1/chat/completions", prompt)
+            return self._chat_completion_request(
+                "https://api.openai.com/v1/chat/completions",
+                prompt,
+                max_tokens_key="max_completion_tokens",
+            )
         if self.provider == "aipipe":
             return self._chat_completion_request("https://aipipe.org/openrouter/v1/chat/completions", prompt)
         if self.provider == "anthropic":
@@ -152,15 +153,20 @@ class UnifiedGenerationService:
             return self._gemini_generate_content_request(prompt)
         raise ValueError(f"Unsupported LLM provider: {self.provider}")
 
-    def _chat_completion_request(self, url: str, prompt: str) -> str:
+    def _chat_completion_request(
+        self,
+        url: str,
+        prompt: str,
+        max_tokens_key: str = "max_tokens",
+    ) -> str:
         payload = {
             "model": self.model,
             "messages": [
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
             ],
-            "max_tokens": 3200,
         }
+        payload[max_tokens_key] = 3200
         response = requests.post(
             url,
             headers={

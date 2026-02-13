@@ -63,16 +63,16 @@ const FALLBACK_LLM_CATALOG = [
   {
     id: "perplexity",
     label: "Perplexity",
-    models: ["sonar", "sonar-pro", "sonar-reasoning-pro", "sonar-deep-research"],
+    models: ["sonar", "sonar-pro", "sonar-reasoning-pro"],
     allow_other: true,
   },
   {
     id: "aipipe",
     label: "AI Pipe",
     models: [
-      "openai/gpt-4.1-mini",
-      "openai/gpt-4.1-nano",
-      "openai/gpt-4o-mini",
+      "openai/gpt-5-mini",
+      "openai/gpt-5-nano",
+      "openai/gpt-5",
       "anthropic/claude-3.5-sonnet",
       "google/gemini-2.5-flash",
     ],
@@ -81,7 +81,7 @@ const FALLBACK_LLM_CATALOG = [
   {
     id: "openai",
     label: "OpenAI",
-    models: ["gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o", "gpt-4o-mini"],
+    models: ["gpt-5", "gpt-5-mini", "gpt-5-nano"],
     allow_other: true,
   },
   {
