@@ -293,6 +293,25 @@ button.ghost {
   color: var(--muted);
 }
 
+.field-with-hint {
+  display: grid;
+  gap: 6px;
+}
+
+.field-hint {
+  margin: 2px 0 2px;
+  padding: 6px 10px;
+  border-left: 3px solid #8aa2e8;
+  border-radius: 0 8px 8px 0;
+  background: #f4f7ff;
+  color: #3e506f;
+  font-size: 0.84rem;
+}
+
+.field-hint strong {
+  color: #1d376c;
+}
+
 .create-hint {
   margin-bottom: 10px;
 }

@@ -1029,16 +1029,18 @@ onBeforeUnmount(() => {
               API Key
               <input v-model="llmForm.api_key" type="password" required placeholder="Enter API key for selected service" />
             </label>
-            <label>
-              Model
-              <select v-model="llmForm.model">
-                <option v-for="modelName in selectedLlmProviderModels" :key="modelName" :value="modelName">
-                  {{ modelName }}
-                </option>
-                <option v-if="selectedLlmProviderAllowsOther" :value="OTHER_MODEL_VALUE">Other</option>
-              </select>
-            </label>
-            <p class="hint">Use the default if you are unsure.</p>
+            <div class="field-with-hint">
+              <label>
+                Model
+                <select v-model="llmForm.model">
+                  <option v-for="modelName in selectedLlmProviderModels" :key="modelName" :value="modelName">
+                    {{ modelName }}
+                  </option>
+                  <option v-if="selectedLlmProviderAllowsOther" :value="OTHER_MODEL_VALUE">Other</option>
+                </select>
+              </label>
+              <p class="field-hint"><strong>Tip:</strong> Use the default if you are unsure.</p>
+            </div>
             <label v-if="isOtherModelSelected && selectedLlmProviderAllowsOther">
               Custom Model Name
               <input
