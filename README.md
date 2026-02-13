@@ -106,6 +106,11 @@ Set GitHub App values in `.env`:
 - optional: `GITHUB_APP_SLUG` (enables the frontend "Install App" button)
 - optional: `APP_BASE_PATH` (use `/app-creator` for subpath hosting)
 - optional: `VITE_APP_BASE_PATH` (must match `APP_BASE_PATH` when building frontend assets)
+- optional: `CORS_ALLOWED_ORIGINS` (comma-separated origins only if you intentionally need cross-origin API access)
+
+For public same-origin hosting behind a reverse proxy, keep CORS disabled:
+- `CORS_ALLOWED_ORIGINS=`
+- `CORS_ALLOW_ORIGIN=`
 
 Run Redis locally, then:
 

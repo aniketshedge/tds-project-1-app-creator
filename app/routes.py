@@ -48,9 +48,27 @@ def register_routes(app: Flask) -> None:
 
     @app.after_request
     def add_cors_headers(response: Response) -> Response:
-        response.headers.setdefault("Access-Control-Allow-Origin", settings.cors_allow_origin)
-        response.headers.setdefault("Access-Control-Allow-Headers", "Content-Type")
-        response.headers.setdefault("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        allowed_origins = _parse_allowed_origins(settings)
+        if not allowed_origins:
+            return response
+
+        origin = request.headers.get("Origin")
+        if not origin:
+            return response
+
+        if "*" in allowed_origins:
+            response.headers.setdefault("Access-Control-Allow-Origin", "*")
+            response.headers.setdefault("Access-Control-Allow-Headers", "Content-Type")
+            response.headers.setdefault("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+            return response
+
+        if origin in allowed_origins:
+            response.headers.setdefault("Access-Control-Allow-Origin", origin)
+            response.headers.setdefault("Access-Control-Allow-Credentials", "true")
+            response.headers.setdefault("Access-Control-Allow-Headers", "Content-Type")
+            response.headers.setdefault("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+            vary = response.headers.get("Vary")
+            response.headers["Vary"] = "Origin" if not vary else f"{vary}, Origin"
         return response
 
     @app.route(scoped("/api/<path:_path>"), methods=["OPTIONS"])
@@ -786,6 +804,17 @@ def _read_preview_metadata(preview_dir: Path) -> dict[str, object] | None:
         expires_at = expires_at.replace(tzinfo=timezone.utc)
     payload["expires_at"] = expires_at
     return payload
+
+
+def _parse_allowed_origins(settings: Settings) -> set[str]:
+    raw = settings.cors_allowed_origins.strip() if settings.cors_allowed_origins else ""
+    if not raw:
+        raw = settings.cors_allow_origin.strip() if settings.cors_allow_origin else ""
+    if not raw:
+        return set()
+    if raw == "*":
+        return {"*"}
+    return {origin.strip().rstrip("/") for origin in raw.split(",") if origin.strip()}
 
 
 def _serialize_job(job, settings: Settings) -> dict[str, object]:

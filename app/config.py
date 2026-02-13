@@ -51,8 +51,9 @@ class Settings(BaseSettings):
     deploy_submit_limit_per_minute: int = 8
     preview_create_limit_per_minute: int = 12
 
-    # Dev convenience (for Vite dev server)
-    cors_allow_origin: str = "*"
+    # CORS (disabled by default; enable only for explicit origins)
+    cors_allowed_origins: str = ""
+    cors_allow_origin: str = ""
 
     def resolve_paths(self) -> None:
         self.app_base_path = _normalize_base_path(self.app_base_path)
