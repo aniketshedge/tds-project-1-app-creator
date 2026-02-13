@@ -891,7 +891,7 @@ async function preparePreview() {
 
   busy.creatingPreview = true;
   previewPrompt.error = "";
-  const previewWindow = window.open("about:blank", "_blank", "noopener");
+  const previewWindow = window.open("", "_blank");
   try {
     const payload = await api(`/api/jobs/${selectedJobId.value}/preview`, {
       method: "POST",
@@ -902,9 +902,10 @@ async function preparePreview() {
     }
     previewPrompt.previewUrl = previewUrl;
     if (previewWindow && !previewWindow.closed) {
+      previewWindow.opener = null;
       previewWindow.location = previewUrl;
     } else {
-      window.open(previewUrl, "_blank", "noopener");
+      window.location.href = previewUrl;
     }
     closePreviewPrompt();
   } catch (error) {
