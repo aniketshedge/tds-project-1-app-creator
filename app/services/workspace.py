@@ -41,6 +41,8 @@ class WorkspaceManager:
     def _safe_target(self, relative_path: str) -> Path:
         clean = Path(relative_path)
         target = (self.path / clean).resolve()
-        if not str(target).startswith(str(self.path)):
+        try:
+            target.relative_to(self.path)
+        except ValueError:
             raise ValueError(f"Invalid file path outside workspace: {relative_path}")
         return target

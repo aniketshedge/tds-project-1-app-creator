@@ -17,13 +17,17 @@ SYSTEM_PROMPT = (
 
 LLM_PROVIDER_MODELS: dict[str, list[str]] = {
     "aipipe": [
-        "openai/gpt-5",
-        "openai/gpt-5-mini",
-        "openai/gpt-5-nano",
-        "anthropic/claude-3.5-sonnet",
+        "openai/gpt-5.5",
+        "openai/gpt-5.4",
+        "openai/gpt-5.4-mini",
+        "anthropic/claude-opus-4.7",
+        "anthropic/claude-sonnet-4.6",
+        "google/gemini-3.1-pro-preview",
         "google/gemini-2.5-flash",
     ],
     "gemini": [
+        "gemini-3-pro-preview",
+        "gemini-3-flash-preview",
         "gemini-2.5-pro",
         "gemini-2.5-flash",
         "gemini-2.5-flash-lite",
@@ -32,20 +36,23 @@ LLM_PROVIDER_MODELS: dict[str, list[str]] = {
     ],
     "perplexity": [
         "sonar-pro",
-        "sonar-reasoning-pro",
         "sonar",
+        "sonar-reasoning-pro",
+        "sonar-deep-research",
     ],
     "openai": [
+        "gpt-5.5",
+        "gpt-5.4",
+        "gpt-5.4-mini",
+        "gpt-5.4-nano",
         "gpt-5",
         "gpt-5-mini",
         "gpt-5-nano",
     ],
     "anthropic": [
-        "claude-sonnet-4-20250514",
-        "claude-opus-4-1-20250805",
-        "claude-opus-4-20250514",
-        "claude-3-7-sonnet-20250219",
-        "claude-3-5-haiku-20241022",
+        "claude-opus-4-7",
+        "claude-sonnet-4-6",
+        "claude-haiku-4-5-20251001",
     ],
 }
 
@@ -138,13 +145,9 @@ class UnifiedGenerationService:
 
     def _request_content(self, prompt: str) -> str | dict[str, Any]:
         if self.provider == "perplexity":
-            return self._chat_completion_request("https://api.perplexity.ai/chat/completions", prompt)
+            return self._chat_completion_request("https://api.perplexity.ai/v1/sonar", prompt)
         if self.provider == "openai":
-            return self._chat_completion_request(
-                "https://api.openai.com/v1/chat/completions",
-                prompt,
-                max_tokens_key="max_completion_tokens",
-            )
+            return self._openai_responses_request(prompt)
         if self.provider == "aipipe":
             return self._chat_completion_request("https://aipipe.org/openrouter/v1/chat/completions", prompt)
         if self.provider == "anthropic":
@@ -194,6 +197,56 @@ class UnifiedGenerationService:
             if text_chunks:
                 return "\n".join(text_chunks)
         raise ValueError("Chat completion response missing assistant content")
+
+    def _openai_responses_request(self, prompt: str) -> str:
+        payload = {
+            "model": self.model,
+            "instructions": SYSTEM_PROMPT,
+            "input": prompt,
+            "max_output_tokens": 3200,
+            "text": {"format": {"type": "json_object"}},
+        }
+        response = requests.post(
+            "https://api.openai.com/v1/responses",
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+            timeout=self.timeout,
+        )
+        if response.status_code >= 400:
+            raise RuntimeError(f"HTTP {response.status_code}: {response.text}")
+
+        data = response.json()
+        if data.get("status") == "failed":
+            error = data.get("error")
+            if isinstance(error, dict) and isinstance(error.get("message"), str):
+                raise RuntimeError(error["message"])
+            raise RuntimeError("OpenAI Responses API returned failed status")
+
+        output_text = data.get("output_text")
+        if isinstance(output_text, str) and output_text.strip():
+            return output_text
+
+        text_chunks: list[str] = []
+        output = data.get("output")
+        if isinstance(output, list):
+            for item in output:
+                if not isinstance(item, dict):
+                    continue
+                content = item.get("content")
+                if not isinstance(content, list):
+                    continue
+                for block in content:
+                    if not isinstance(block, dict):
+                        continue
+                    if block.get("type") == "output_text" and isinstance(block.get("text"), str):
+                        text_chunks.append(block["text"])
+
+        if text_chunks:
+            return "\n".join(text_chunks)
+        raise ValueError("OpenAI Responses API response missing output text")
 
     def _anthropic_messages_request(self, prompt: str) -> str:
         payload = {
